@@ -1,3 +1,19 @@
+# Archives
+*.zip
+*.7z
+*.rar
+*.gz
+
+# Images
+images/
+*.jpg
+*.png
+*.svg
+
+# Temporary files
+*.tmp
+*.temp
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
