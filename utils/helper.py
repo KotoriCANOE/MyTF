@@ -1,62 +1,57 @@
 import tensorflow as tf
 
-# functions
+# divide 2 integers and round up
 def divUp(dividend, divisor):
     return (dividend + divisor - 1) // divisor
 
-LayerNum = 0
+# make directory
+def mkdir(path):
+    import os
+    # remove front blanks
+    path = path.strip()
+    # remove / and \ at the end
+    path = path.rstrip('/')
+    path = path.rstrip('\\')
 
-def conv2dLayer(x, out_channels=None, kernel=3, stride=1, padding='SAME', pooling=1, activation='relu',
-                weight_std=1e-3, bias=0, wd=None, name=None):
-    global LayerNum
-    LayerNum += 1
-    if name is None: name = str(LayerNum)
-    
-    in_channels = x.shape[-1]
-    if out_channels is None: out_channels = in_channels
-    W = tf.Variable(tf.truncated_normal([kernel, kernel, in_channels, out_channels],
-                                        stddev=weight_std, dtype=x.dtype), name='weight' + name)
-    b = tf.Variable(tf.constant(bias, x.dtype, [out_channels]), name='bias' + name)
-    last = tf.nn.conv2d(x, W, strides=[1, stride, stride, 1], padding=padding, name='conv' + name)
-    last = tf.nn.bias_add(last, b, name='conv_bias' + name)
-    
-    if pooling > 1:
-        last = tf.nn.max_pool(last, ksize=[1, pooling, pooling, 1], strides=[1, pooling, pooling, 1],
-                              padding=padding, name='pool' + name)
-    if activation == 'relu':
-        last = tf.nn.relu(last, name='relu' + name)
-    elif activation:
-        raise ValueError('Unsupported \'activation\' specified!')
-    
-    if wd is not None:
-        weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss' + name)
-        tf.add_to_collection('losses', weight_decay)
-    
-    return last, W, b
+    if os.path.exists(path):
+        return False
+    else:
+        os.makedirs(path)
+        return True
 
-def deconv2dLayer(x, out_channels=None, kernel=3, stride=2, padding='SAME', activation='',
-                  weight_std=1e-3, bias=0, wd=None, name=None):
-    global LayerNum
-    LayerNum += 1
-    if name is None: name = str(LayerNum)
-    
-    in_channels = x.shape[-1]
-    if out_channels is None: out_channels = in_channels
-    out_shape = (x.shape[0], x.shape[1] * stride, x.shape[2] * stride, out_channels)
-    W = tf.Variable(tf.truncated_normal([kernel, kernel, out_channels, in_channels],
-                                        stddev=weight_std, dtype=x.dtype))
-    b = tf.Variable(tf.constant(bias, x.dtype, [out_channels]))
-    last = tf.nn.conv2d_transpose(x, W, output_shape=out_shape, strides=[1, stride, stride, 1],
-                                  padding=padding, name='deconv' + name)
-    last = tf.nn.bias_add(last, b, name='conv_bias' + name)
-    
-    if activation == 'relu':
-        last = tf.nn.relu(last, name='relu' + name)
-    elif activation:
-        raise ValueError('Unsupported \'activation\' specified!')
-    
-    if wd is not None:
-        weight_decay = tf.mul(tf.nn.l2_loss(W), wd, name='weight_loss' + name)
-        tf.add_to_collection('losses', weight_decay)
-    
-    return last, W, b
+# recursively list all the files' path under directory
+def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
+    import os, locale
+    if encoding is True: encoding = locale.getpreferredencoding()
+    if filter_ext is not None: filter_ext = [e.lower() for e in filter_ext]
+    files = []
+    for (dirpath, dirnames, filenames) in os.walk(path):
+        for f in filenames:
+            if os.path.splitext(f)[1].lower() in filter_ext:
+                file_path = '{}/{}'.format(dirpath, f)
+                if encoding: file_path = file_path.encode(encoding)
+                files.append(file_path)
+        if not recursive: break
+    return files
+
+# reading images using FIFOQueue within tensorflow graph
+def ImageReader(files, channels=0, shuffle=False):
+    file_queue = tf.train.string_input_producer(files, shuffle=shuffle)
+    reader = tf.WholeFileReader()
+    key, value = reader.read(file_queue)
+    image = tf.image.decode_image(value, channels=channels)
+    image.set_shape([None, None, 3])
+    return image
+
+# writing batch of images within tensorflow graph
+def ImageBatchWriter(sess, images, files, dtype=tf.uint8):
+    pngs = []
+    for i in range(len(files)):
+        img = images[i]
+        img = tf.image.convert_image_dtype(img, dtype, saturate=True)
+        png = tf.image.encode_png(img, compression=9)
+        pngs.append(png)
+    pngs = sess.run(pngs)
+    for i in range(len(files)):
+        with open(files[i], 'wb') as f:
+            f.write(pngs[i])
