@@ -4,25 +4,35 @@ import tensorflow as tf
 # flags
 FLAGS = tf.app.flags.FLAGS
 
-# basic model parameters
+# basic parameters
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
 tf.app.flags.DEFINE_boolean('multiGPU', False,
                             """Train the model using multiple GPUs.""")
 tf.app.flags.DEFINE_integer('scaling', 2,
                             """Scaling ratio of the super-resolution filter.""")
+tf.app.flags.DEFINE_float('weight_decay', 1e-4,
+                            """L2 regularization weight decay factor""")
+tf.app.flags.DEFINE_float('learning_rate', 2e-4,
+                            """Initial learning rate""")
+tf.app.flags.DEFINE_float('lr_decay_epochs', 10.0,
+                            """Epochs after which learning rate decays""")
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.9,
+                            """Learning rate decay factor""")
+tf.app.flags.DEFINE_float('learning_momentum', 0.9,
+                            """momentum for MomentumOptimizer""")
+tf.app.flags.DEFINE_float('learning_beta1', 0.5,
+                            """beta1 for AdamOptimizer""")
+tf.app.flags.DEFINE_float('epsilon', 1e-8,
+                            """Fuzz term to avoid numerical instability""")
+tf.app.flags.DEFINE_float('gradient_clipping', 0, #0.001
+                            """Gradient clipping factor""")
+tf.app.flags.DEFINE_float('moving_average_decay', 0.9999,
+                            """The decay to use for the moving average""")
 
 # advanced model parameters
-CONV_LAYERS = 9
+CONV_LAYERS = 4
 CHANNELS = 64
-
-# constants describing the training process
-WEIGHT_DECAY = 0.0001
-MOVING_AVERAGE_DECAY = 0.9999 # the decay to use for the moving average
-EPOCHS_PER_DECAY = 20.0 # epochs after which learning rate decays
-INITIAL_LEARNING_RATE = 0.1 # initial learning rate
-LEARNING_RATE_DECAY_FACTOR = 0.55 # learning rate decay factor
-GRADIENT_CLIPPING = 0.0005 # gradient clipping factor
 
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the
@@ -96,7 +106,7 @@ def inference(images_lr, images_up, channels=CHANNELS):
             out_channels = channels[l]
             kshape = [3, 3, in_channels, out_channels]
             kernel = _variable_with_weight_decay('weights', shape=kshape,
-                                                 stddev=0.001, wd=WEIGHT_DECAY)
+                                                 stddev=0.001, wd=FLAGS.weight_decay)
             conv = tf.nn.conv2d(last, kernel, [1, 1, 1, 1], padding='VALID')
             biases = _get_variable('biases', [out_channels],
                                       tf.constant_initializer(0.0))
@@ -110,19 +120,17 @@ def inference(images_lr, images_up, channels=CHANNELS):
         in_channels = last.shape[-1]
         out_channels = image_channels
         kshape = [5, 5, out_channels, in_channels]
-        out_shape = [last.shape[0], last.shape[1] * scaling, last.shape[1] * scaling, out_channels]
+        out_shape = [last.shape[0], last.shape[1] * scaling, last.shape[2] * scaling, out_channels]
         out_shape = [int(d) for d in out_shape]
         print('Deconvolution input shape: {}'.format(last.get_shape()))
         kernel = _variable_with_weight_decay('weights', shape=kshape,
-                                             stddev=0.001, wd=WEIGHT_DECAY)
+                                             stddev=0.001, wd=FLAGS.weight_decay)
         conv = tf.nn.conv2d_transpose(last, kernel, out_shape,
                                       [1, scaling, scaling, 1], padding='SAME')
         print('Deconvolution output shape: {}'.format(conv.get_shape()))
         biases = _get_variable('biases', [out_channels],
                                   tf.constant_initializer(0.0))
         biased = tf.nn.bias_add(conv, biases)
-        #activated = tf.nn.relu(biased, name=scope.name)
-        #_activation_summary(activated)
         last = biased
     # get SR image by adding residual to upsampled LR image
     with tf.variable_scope('residual_add') as scope:
@@ -133,6 +141,9 @@ def inference(images_lr, images_up, channels=CHANNELS):
         #size_up = [int(residual.shape[1]), int(residual.shape[2])]
         #images_up = tf.image.resize_nearest_neighbor(images_lr_crop, size_up)
         images_sr = tf.add(images_up, residual, name='add')
+    '''
+    images_sr = last
+    '''
     # return SR image
     return images_sr
 
@@ -168,29 +179,31 @@ def _add_loss_summaries(total_loss):
     return loss_averages_op
 
 def train(total_loss, global_step, epoch_size):
-    # variables that affect learning rate
-    batches_per_epoch = epoch_size / FLAGS.batch_size
-    decay_steps = int(batches_per_epoch * EPOCHS_PER_DECAY)
-    
     # decay the learning rate exponentially based on the number of steps
-    lr = tf.train.exponential_decay(INITIAL_LEARNING_RATE, global_step,
-                                    decay_steps, LEARNING_RATE_DECAY_FACTOR,
-                                    staircase=True)
-    tf.summary.scalar('learning_rate', lr)
+    lr = FLAGS.learning_rate
+    if FLAGS.lr_decay_epochs > 0 and FLAGS.lr_decay_factor != 1:
+        batches_per_epoch = epoch_size / FLAGS.batch_size
+        decay_steps = int(batches_per_epoch * FLAGS.lr_decay_epochs)
+        lr = tf.train.exponential_decay(lr, global_step,
+                                        decay_steps, FLAGS.lr_decay_factor,
+                                        staircase=True)
+        tf.summary.scalar('learning_rate', lr)
     
     # generate moving averages of all losses and associated summaries
     loss_averages_op = _add_loss_summaries(total_loss)
 
     # compute gradients
     with tf.control_dependencies([loss_averages_op]):
-        opt = tf.train.GradientDescentOptimizer(lr)
+        #opt = tf.train.MomentumOptimizer(lr, momentum=FLAGS.learning_momentum, use_nesterov=True)
+        opt = tf.train.AdamOptimizer(lr, beta1=FLAGS.learning_beta1, epsilon=FLAGS.epsilon)
         grads_and_vars = opt.compute_gradients(total_loss)
 
     # gradient clipping
-    clip_value = GRADIENT_CLIPPING / lr
-    grads_and_vars = [(tf.clip_by_value(
-            grad, -clip_value, clip_value, name='gradient_clipping'
-            ), var) for grad, var in grads_and_vars]
+    if FLAGS.gradient_clipping > 0:
+        clip_value = FLAGS.gradient_clipping / lr
+        grads_and_vars = [(tf.clip_by_value(
+                grad, -clip_value, clip_value, name='gradient_clipping'
+                ), var) for grad, var in grads_and_vars]
 
     # apply gradient
     apply_gradient_op = opt.apply_gradients(grads_and_vars, global_step)
@@ -214,43 +227,3 @@ def train(total_loss, global_step, epoch_size):
     with tf.control_dependencies([apply_gradient_op]):
         train_op = tf.no_op(name='train')
     return train_op
-
-'''
-def VDSR(epochs, batch_size, learn_rate=0.1, weight_decay=0.0001, layers=9, channels=64, image_channels=3):
-    if isinstance(channels, int): channels = [channels for l in range(layers)]
-    shape = (None, None, None, image_channels)
-    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-
-    x = tf.placeholder(dtype, shape, name='LR_image')
-    x2 = tf.placeholder(dtype, shape, name='LR_image_upsampled')
-    y_ = tf.placeholder(dtype, shape, name='HR_image')
-    weights = []
-    biases = []
-
-    # conv layers
-    last = x
-    for l in range(layers):
-        last, W, b = conv2dLayer(last, channels[l], 3, 1, padding='SAME', activation='relu',
-                                 weight_std=1e-3, bias=0, wd=weight_decay)
-        weights.append(W)
-        biases.append(b)
-
-    # final deconv layer
-    last, W, b = deconv2dLayer(last, image_channels, 3, 2, padding='SAME', activation='',
-                               weight_std=1e-3, bias=0, wd=weight_decay)
-    weights.append(W)
-    biases.append(b)
-
-    # adding residual
-    y = x2 + last
-
-    # loss function
-    l2loss = tf.reduce_mean(tf.squared_difference(y, y_, name='loss (L2 diff)'), name='loss (mean)')
-    tf.add_to_collection('losses', l2loss)
-    loss = tf.add_n(tf.get_collection('losses'), name='total loss')
-
-    # optimization
-    train_step = tf.train.AdamOptimizer(learn_rate, epsilon=1e-3).minimize(loss)
-
-    return train_step, l2loss, weights, biases
-'''

@@ -18,7 +18,7 @@ FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('train_dir', './{}.tmp'.format(THIS_FILE_NAME),
                            """Directory where to write event logs """
                            """and checkpoint.""")
-tf.app.flags.DEFINE_integer('max_steps', 100000,
+tf.app.flags.DEFINE_integer('max_steps', 2000000,
                             """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -28,7 +28,7 @@ tf.app.flags.DEFINE_integer('batch_size', 64,
                             """Batch size.""")
 
 # constants
-TRAIN_FILE = r'D:\Datasets\91-image\linearscale2_bicubic_point\train_42_6.h5'
+TRAIN_FILE = r'D:\Datasets\91-image\linearscale2_bicubic_point\train_20_4.h5'
 TEST_FILE = r'D:\Datasets\91-image\linearscale2_bicubic_point\test_160_124.h5'
 
 # helper class
