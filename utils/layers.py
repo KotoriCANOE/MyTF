@@ -1,6 +1,7 @@
 import re
 import numpy as np
 import tensorflow as tf
+from utils import helper
 
 # flags
 FLAGS = tf.app.flags.FLAGS
@@ -68,7 +69,8 @@ def conv2d_variable(name, shape, init_factor=None, wd=None):
         Variable Tensor
     """
     dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-    shape = [int(s) for s in shape]
+    shape = helper.dim2int(shape)
+    batch_size = FLAGS.batch_size
     # weights initializer
     if init_factor is None:
         init_factor = 1.0 if FLAGS.initializer == 4 else 2.0
@@ -85,7 +87,7 @@ def conv2d_variable(name, shape, init_factor=None, wd=None):
         initializer = tf.contrib.layers.variance_scaling_initializer(
             factor=init_factor, mode='FAN_IN', uniform=False)
     elif FLAGS.initializer >= 5: # modified Xavier initializer
-        stddev = np.sqrt(init_factor / (np.sqrt(shape[2] * shape[3]) * shape[0] * shape[1]))
+        stddev = np.sqrt(init_factor / (np.sqrt(shape[2] * shape[3]) * batch_size * shape[1]))
         initializer = tf.truncated_normal_initializer(stddev=stddev, dtype=dtype)
     # weights initialization
     var = get_variable(name, shape, initializer)
@@ -141,13 +143,12 @@ def resize_conv2d(scope, last, ksize, out_channels, scaling=2,
     in_channels = shape[-1]
     kshape = [ksize, ksize, out_channels, in_channels]
     out_shape = [shape[0], shape[1] * scaling, shape[2] * scaling, out_channels]
-    out_shape = [int(d) for d in out_shape]
     # nearest-neighbor upsample
-    last = tf.image.resize_nearest_neighbor(last, size=out_shape[1:3])
+    last = tf.image.resize_nearest_neighbor(last, size=helper.dim2int(out_shape)[1:3])
     # deconvolution 2D
     kernel = conv2d_variable('weights', shape=kshape,
                               init_factor=init_factor, wd=wd)
-    last = tf.nn.conv2d_transpose(last, kernel, out_shape,
+    last = tf.nn.conv2d_transpose(last, kernel, tf.TensorShape(out_shape),
                                   [1, 1, 1, 1], padding='SAME')
     biases = get_variable('biases', [out_channels],
                               tf.constant_initializer(0.0))

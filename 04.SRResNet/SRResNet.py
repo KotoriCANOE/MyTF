@@ -136,7 +136,7 @@ def main_loss(images_hr, images_sr):
 def loss():
     return tf.losses.get_total_loss()
 
-def train(total_loss, global_step, epoch_size):
+def train(total_loss, global_step):
     # decay the learning rate exponentially based on the number of steps
     lr = FLAGS.learning_rate
     if FLAGS.lr_decay_steps > 0 and FLAGS.lr_decay_factor != 1:

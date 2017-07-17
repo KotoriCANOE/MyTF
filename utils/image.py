@@ -1,9 +1,10 @@
 import numpy as np
 import tensorflow as tf
+from utils import helper
 
 def RGB2OPP(images, norm=False, scope='RGB2OPP'):
     shape = images.get_shape()
-    shape = [int(s) for s in shape]
+    shape = helper.dim2int(shape)
     assert shape[-1] == 3
     last = images
     with tf.variable_scope(scope):
@@ -28,7 +29,7 @@ def RGB2OPP(images, norm=False, scope='RGB2OPP'):
 
 def OPP2RGB(images, norm=False, scope='OPP2RGB'):
     shape = images.get_shape()
-    shape = [int(s) for s in shape]
+    shape = helper.dim2int(shape)
     assert shape[-1] == 3
     last = images
     with tf.variable_scope(scope):

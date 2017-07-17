@@ -2,8 +2,9 @@ import sys
 import os
 from datetime import datetime
 import time
-import math
 import tensorflow as tf
+sys.path.append('..')
+from utils import helper
 
 from SRResNet_input import inputs
 import SRResNet
@@ -18,18 +19,25 @@ FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('train_dir', './{}.tmp'.format(THIS_FILE_NAME),
                            """Directory where to write event logs """
                            """and checkpoint.""")
-tf.app.flags.DEFINE_integer('max_steps', 1e5,
-                            """Number of batches to run.""")
+tf.app.flags.DEFINE_integer('threads', 4,
+                            """Number of threads for Dataset process.""")
+tf.app.flags.DEFINE_integer('num_epochs', 20,
+                            """Number of epochs to run.""")
+#tf.app.flags.DEFINE_integer('max_steps', 1e5,
+#                            """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """Log frequency.""")
+tf.app.flags.DEFINE_integer('block_size', 128,
+                            """Block size.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
+tf.app.flags.DEFINE_integer('buffer_size', 8192,
+                            """Buffer size for random shuffle.""")
 
 # constants
-TRAIN_FILE = r'E:\Datasets\91-image\linearscale2_bicubic_point\train_96_96.h5'
-TEST_FILE = r'E:\Datasets\91-image\linearscale2_bicubic_point\test_160_160.h5'
+TRAINSET_PATH = r'..\Dataset.SR\Train'
 
 # helper class
 class LoggerHook(tf.train.SessionRunHook):
@@ -55,6 +63,7 @@ class LoggerHook(tf.train.SessionRunHook):
             duration = current_time - self._start_time
             self._start_time = current_time
 
+            #import math
             #mse = run_values.results
             #psnr = 10 * math.log10(1 / mse) if mse > 0 else 100
             mad = run_values.results
@@ -68,27 +77,35 @@ class LoggerHook(tf.train.SessionRunHook):
 
 # training
 def train():
+    files = helper.listdir_files(TRAINSET_PATH,
+                                 filter_ext=['.jpeg', '.jpg', '.png'],
+                                 encoding=True)
+    steps_per_epoch = len(files) // FLAGS.batch_size
+    epoch_size = steps_per_epoch * FLAGS.batch_size
+    files = files[:epoch_size]
+    max_steps = int(steps_per_epoch * FLAGS.num_epochs)
+    print('epoch size: {}\n{} steps per epoch\n{} epochs\n{} steps'.format(
+        epoch_size, steps_per_epoch, FLAGS.num_epochs, max_steps))
+    
     with tf.Graph().as_default():
         # Force input pipeline to CPU:0 to avoid operations sometimes ending up on
         # GPU and resulting in a slow down.
         with tf.device('/cpu:0'):
-            images_lr, images_hr, epoch_size = inputs(TRAIN_FILE, FLAGS.batch_size, shuffle=True)
-        steps_per_epoch = epoch_size / FLAGS.batch_size
-        print('{} steps per epoch'.format(steps_per_epoch))
+            images_lr, images_hr = inputs(files)
         
         images_sr = SRResNet.inference(images_lr, is_training=True)
         main_loss = SRResNet.main_loss(images_hr, images_sr)
         loss = SRResNet.loss()
         
         global_step = tf.contrib.framework.get_or_create_global_step()
-        train_op = SRResNet.train(loss, global_step, epoch_size)
+        train_op = SRResNet.train(loss, global_step)
         
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
         config.gpu_options.allow_growth = True
         
         with tf.train.MonitoredTrainingSession(
                 checkpoint_dir=FLAGS.train_dir,
-                hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
+                hooks=[tf.train.StopAtStepHook(last_step=max_steps),
                        tf.train.NanTensorHook(loss),
                        LoggerHook(main_loss[0], steps_per_epoch)],
                 config=config) as mon_sess:

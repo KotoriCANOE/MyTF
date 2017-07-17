@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 # divide 2 integers and round up
-def divUp(dividend, divisor):
+def DivUp(dividend, divisor):
     return (dividend + divisor - 1) // divisor
 
 # make directory
@@ -33,6 +33,10 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
                 files.append(file_path)
         if not recursive: break
     return files
+
+# convert list of tf.Dimension to list of int/None
+def dim2int(shape):
+    return [s.value if isinstance(s, tf.Dimension) else s for s in shape]
 
 # reading images using FIFOQueue within tensorflow graph
 def ImageReader(files, channels=0, shuffle=False):
