@@ -28,7 +28,7 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
     for (dirpath, dirnames, filenames) in os.walk(path):
         for f in filenames:
             if os.path.splitext(f)[1].lower() in filter_ext:
-                file_path = '{}/{}'.format(dirpath, f)
+                file_path = os.path.join(dirpath, f)
                 if encoding: file_path = file_path.encode(encoding)
                 files.append(file_path)
         if not recursive: break
@@ -44,18 +44,25 @@ def ImageReader(files, channels=0, shuffle=False):
     reader = tf.WholeFileReader()
     key, value = reader.read(file_queue)
     image = tf.image.decode_image(value, channels=channels)
-    image.set_shape([None, None, 3])
+    #image.set_shape([None, None, None if channels <= 0 else channels])
     return image
 
 # writing batch of images within tensorflow graph
-def ImageBatchWriter(sess, images, files, dtype=tf.uint8):
+def BatchPNG(images, batch_size, dtype=tf.uint8):
     pngs = []
-    for i in range(len(files)):
+    for i in range(batch_size):
         img = images[i]
         img = tf.image.convert_image_dtype(img, dtype, saturate=True)
         png = tf.image.encode_png(img, compression=9)
         pngs.append(png)
-    pngs = sess.run(pngs)
+    return pngs
+
+def WriteFiles(bytes, files):
     for i in range(len(files)):
         with open(files[i], 'wb') as f:
-            f.write(pngs[i])
+            f.write(bytes[i])
+
+def ImageBatchWriter(sess, images, files, dtype=tf.uint8):
+    pngs = BatchPNG(images, len(files))
+    pngs = sess.run(pngs)
+    WriteFiles(pngs, files)

@@ -1,7 +1,7 @@
 import sys
 import tensorflow as tf
 sys.path.append('..')
-import utils.image
+from utils import helper
 from utils import layers
 
 # flags
@@ -14,15 +14,17 @@ tf.app.flags.DEFINE_boolean('multiGPU', False,
                             """Train the model using multiple GPUs.""")
 tf.app.flags.DEFINE_integer('scaling', 2,
                             """Scaling ratio of the super-resolution filter.""")
+tf.app.flags.DEFINE_integer('image_channels', 3,
+                            """Channels of input/output image.""")
 tf.app.flags.DEFINE_float('weight_decay', 0, #1e-4,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_min', 1e-4,
+tf.app.flags.DEFINE_float('lr_min', 0.0,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 1e3,
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.95,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.98,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
@@ -60,18 +62,20 @@ tf.app.flags.DEFINE_float('init_activation', 1.0,
                             """Weights initialization STD factor for conv layers with activation.""")
 
 # model
-def inference(images_lr, is_training):
+def inference(images_lr, is_training=False):
     print('k_first={}, k_last={}, res_blocks={}, channels={}, channels2={}'.format(
         FLAGS.k_first, FLAGS.k_last, FLAGS.res_blocks, FLAGS.channels, FLAGS.channels2))
-    last = images_lr
-    l = 0
     # channels
-    image_channels = images_lr.get_shape()[-1]
+    image_channels = FLAGS.image_channels
     conv_layers = 1 + FLAGS.res_blocks * 2 + 1
     conv2_layers = 1
     channels = [image_channels] + \
         [FLAGS.channels for l in range(conv_layers)] + \
         [FLAGS.channels2 for l in range(conv2_layers)]
+    # initialization
+    last = images_lr
+    last.set_shape(helper.dim2int(last.get_shape()[:-1]) + [image_channels])
+    l = 0
     # first conv layer
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -97,6 +101,7 @@ def inference(images_lr, is_training):
                                  stride=1, padding='SAME',
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
                                  init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
+        with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
     # skip connection
     l += 1
@@ -122,19 +127,6 @@ def inference(images_lr, is_training):
     # return SR image
     print('Totally {} convolutional layers.'.format(l))
     return last
-
-def main_loss(images_hr, images_sr):
-    # RGB loss
-    RGB_mad = tf.losses.absolute_difference(images_hr, images_sr, weights=1e-3)
-    # OPP loss
-    images_hr = utils.image.RGB2OPP(images_hr, norm=False)
-    images_sr = utils.image.RGB2OPP(images_sr, norm=False)
-    #mse = tf.losses.mean_squared_error(images_hr, images_sr, weights=1.0)
-    mad = tf.losses.absolute_difference(images_hr, images_sr, weights=1.0)
-    return mad, RGB_mad
-
-def loss():
-    return tf.losses.get_total_loss()
 
 def train(total_loss, global_step):
     # decay the learning rate exponentially based on the number of steps
