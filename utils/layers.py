@@ -70,7 +70,6 @@ def conv2d_variable(name, shape, init_factor=None, wd=None):
     """
     dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
     shape = helper.dim2int(shape)
-    batch_size = FLAGS.batch_size
     # weights initializer
     if init_factor is None:
         init_factor = 1.0 if FLAGS.initializer == 4 else 2.0
@@ -87,7 +86,7 @@ def conv2d_variable(name, shape, init_factor=None, wd=None):
         initializer = tf.contrib.layers.variance_scaling_initializer(
             factor=init_factor, mode='FAN_IN', uniform=False)
     elif FLAGS.initializer >= 5: # modified Xavier initializer
-        stddev = np.sqrt(init_factor / (np.sqrt(shape[2] * shape[3]) * batch_size * shape[1]))
+        stddev = np.sqrt(init_factor / (np.sqrt(shape[2] * shape[3]) * shape[0] * shape[1]))
         initializer = tf.truncated_normal_initializer(stddev=stddev, dtype=dtype)
     # weights initialization
     var = get_variable(name, shape, initializer)
@@ -101,13 +100,16 @@ def conv2d(scope, last, ksize, out_channels, stride=1, padding='SAME',
             batch_norm=0.999, is_training=True, activation='relu',
             init_factor=1.0, wd=None):
     # parameters
-    shape = last.get_shape()
-    in_channels = shape[-1]
-    kshape = [ksize, ksize, in_channels, out_channels]
+    in_channels = last.get_shape()[-1]
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    kshape = [ksize[0], ksize[1], in_channels, out_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                               init_factor=init_factor, wd=wd)
+    if isinstance(stride, int) or isinstance(stride, tf.Dimension):
+        stride = [1, stride, stride, 1]
     # convolution 2D
-    last = tf.nn.conv2d(last, kernel, [1, 1, 1, 1], padding=padding)
+    last = tf.nn.conv2d(last, kernel, strides=stride, padding=padding)
     biases = get_variable('biases', [out_channels],
                            tf.constant_initializer(0.0))
     last = tf.nn.bias_add(last, biases)
@@ -139,17 +141,19 @@ def resize_conv2d(scope, last, ksize, out_channels, scaling=2,
                    batch_norm=None, is_training=True, activation=None,
                    init_factor=1.0, wd=None):
     # parameters
-    shape = last.get_shape()
-    in_channels = shape[-1]
-    kshape = [ksize, ksize, out_channels, in_channels]
+    in_channels = last.get_shape()[-1]
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    kshape = [ksize[0], ksize[1], out_channels, in_channels]
+    shape = tf.shape(last)
     out_shape = [shape[0], shape[1] * scaling, shape[2] * scaling, out_channels]
     # nearest-neighbor upsample
-    last = tf.image.resize_nearest_neighbor(last, size=helper.dim2int(out_shape)[1:3])
+    last = tf.image.resize_nearest_neighbor(last, size=out_shape[1:3])
     # deconvolution 2D
     kernel = conv2d_variable('weights', shape=kshape,
                               init_factor=init_factor, wd=wd)
-    last = tf.nn.conv2d_transpose(last, kernel, tf.TensorShape(out_shape),
-                                  [1, 1, 1, 1], padding='SAME')
+    last = tf.nn.conv2d_transpose(last, kernel, out_shape,
+                                  strides=[1, 1, 1, 1], padding='SAME')
     biases = get_variable('biases', [out_channels],
                               tf.constant_initializer(0.0))
     last = tf.nn.bias_add(last, biases)

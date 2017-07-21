@@ -13,6 +13,9 @@ images/
 *.svg
 *.psd
 
+# Dataset
+*.npy*
+
 # Temporary files
 *.tmp
 *.temp
