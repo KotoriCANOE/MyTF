@@ -19,6 +19,7 @@ images/
 # Temporary files
 *.tmp
 *.temp
+events.out.*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

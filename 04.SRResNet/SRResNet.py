@@ -24,7 +24,7 @@ tf.app.flags.DEFINE_float('lr_min', 0.0,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 1e3,
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.98,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.95,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
@@ -67,11 +67,8 @@ def inference(images_lr, is_training=False):
         FLAGS.k_first, FLAGS.k_last, FLAGS.res_blocks, FLAGS.channels, FLAGS.channels2))
     # channels
     image_channels = FLAGS.image_channels
-    conv_layers = 1 + FLAGS.res_blocks * 2 + 1
-    conv2_layers = 1
-    channels = [image_channels] + \
-        [FLAGS.channels for l in range(conv_layers)] + \
-        [FLAGS.channels2 for l in range(conv2_layers)]
+    channels = FLAGS.channels
+    channels2 = FLAGS.channels2
     # initialization
     last = images_lr
     last.set_shape(helper.dim2int(last.get_shape()[:-1]) + [image_channels])
@@ -79,7 +76,7 @@ def inference(images_lr, is_training=False):
     # first conv layer
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
-        last = layers.conv2d(scope, last, ksize=FLAGS.k_first, out_channels=channels[l],
+        last = layers.conv2d(scope, last, ksize=FLAGS.k_first, out_channels=channels,
                              stride=1, padding='SAME',
                              batch_norm=None, is_training=is_training, activation=FLAGS.activation,
                              init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
@@ -88,16 +85,16 @@ def inference(images_lr, is_training=False):
     rb = 0
     while rb < FLAGS.res_blocks:
         rb += 1
-        skip2 = last 
+        skip2 = last
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
-            last = layers.conv2d(scope, last, ksize=3, out_channels=channels[l],
+            last = layers.conv2d(scope, last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME',
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
                                  init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
-            last = layers.conv2d(scope, last, ksize=3, out_channels=channels[l],
+            last = layers.conv2d(scope, last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME',
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
                                  init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
@@ -106,7 +103,7 @@ def inference(images_lr, is_training=False):
     # skip connection
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
-        last = layers.conv2d(scope, last, ksize=3, out_channels=channels[l],
+        last = layers.conv2d(scope, last, ksize=3, out_channels=channels,
                              stride=1, padding='SAME',
                              batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
                              init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
@@ -114,7 +111,7 @@ def inference(images_lr, is_training=False):
     # resize conv layer
     l += 1
     with tf.variable_scope('resize_conv{}'.format(l)) as scope:
-        last = layers.resize_conv2d(scope, last, ksize=3, out_channels=channels[l], scaling=FLAGS.scaling,
+        last = layers.resize_conv2d(scope, last, ksize=3, out_channels=channels2, scaling=FLAGS.scaling,
                                     batch_norm=None, is_training=is_training, activation=FLAGS.activation,
                                     init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
     # final conv layer

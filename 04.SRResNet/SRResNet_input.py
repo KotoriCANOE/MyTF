@@ -110,10 +110,10 @@ def inputs(files, is_training=False, is_testing=False):
             block = tf.image.crop_to_bounding_box(block, offset_height, offset_width,
                                                   cropped_height, cropped_width)
         block = tf.image.convert_image_dtype(block, dtype, saturate=False)
-        if is_training:
-            block = tf.image.random_saturation(block, .95, 1.05)
-            block = tf.image.random_brightness(block, .05)
-            block = tf.image.random_contrast(block, .95, 1.05)
+        if is_training and FLAGS.color_augmentation > 0:
+            block = tf.image.random_saturation(block, 1 - FLAGS.color_augmentation, 1 + FLAGS.color_augmentation)
+            block = tf.image.random_brightness(block, FLAGS.color_augmentation)
+            block = tf.image.random_contrast(block, 1 - FLAGS.color_augmentation, 1 + FLAGS.color_augmentation)
         # process 2
         data_size = [patch_height // scaling, patch_width // scaling]
         data = tf.image.resize_images(block, data_size, tf.image.ResizeMethod.AREA)
@@ -130,7 +130,7 @@ def inputs(files, is_training=False, is_testing=False):
         label = tf.cond(tf.not_equal(dscale, 1), c_f1, lambda: block)
         # process 3
         data_shape = [patch_height // scaling, patch_width // scaling, channels]
-        if is_training:
+        if is_training and FLAGS.noise_level > 0:
             noise = tf.random_normal(data_shape, mean=0.0, stddev=FLAGS.noise_level, dtype=data.dtype)
             data = tf.add(data, noise)
         data = tf.clip_by_value(data, 0.0, 1.0)

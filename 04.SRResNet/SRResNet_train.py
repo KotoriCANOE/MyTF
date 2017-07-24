@@ -2,6 +2,7 @@ import sys
 import os
 from datetime import datetime
 import time
+import numpy as np
 import tensorflow as tf
 sys.path.append('..')
 from utils import helper
@@ -12,12 +13,13 @@ import SRResNet as model
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
-#THIS_FILE_NAME = os.path.splitext(os.path.basename(sys.argv[0]))[0]
 
 # flags
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', './train.tmp',
+tf.app.flags.DEFINE_string('postfix', '',
+                            """Postfix added to train_dir, test_dir, test files, etc.""")
+tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
@@ -25,8 +27,6 @@ tf.app.flags.DEFINE_integer('threads', 4,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
-#tf.app.flags.DEFINE_integer('max_steps', 1e5,
-#                            """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('log_frequency', 100,
@@ -39,8 +39,12 @@ tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
+tf.app.flags.DEFINE_float('color_augmentation', 0.05,
+                            """Amount of random color augmentations.""")
 tf.app.flags.DEFINE_float('noise_level', 0,
                             """STD of additive normal dist. random noise.""")
+tf.app.flags.DEFINE_float('mixed_alpha', 0.50,
+                            """blend weight for mixed loss.""")
 
 # constants
 TRAINSET_PATH = r'..\Dataset.SR\Train'
@@ -69,32 +73,46 @@ class LoggerHook(tf.train.SessionRunHook):
             duration = current_time - self._start_time
             self._start_time = current_time
 
-            #import math
-            #mse = run_values.results
-            #psnr = 10 * math.log10(1 / mse) if mse > 0 else 100
-            mad = run_values.results
+            loss = run_values.results
             examples_per_sec = FLAGS.log_frequency * FLAGS.batch_size / duration
             sec_per_batch = float(duration / FLAGS.log_frequency)
 
-            #format_str = '{}: epoch {}, step {}, PSNR = {:.3f} ({:.0f} examples/sec; {:.3f} sec/batch)'
-            format_str = '{}: epoch {}, step {}, MAD = {:.5} ({:.0f} examples/sec; {:.3f} sec/batch)'
+            format_str = '{}: epoch {}, step {}, loss = {:.5} ({:.0f} examples/sec; {:.3f} sec/batch)'
             print(format_str.format(datetime.now(), self._epoch, self._step,
-                                    mad, examples_per_sec, sec_per_batch))
+                                    loss, examples_per_sec, sec_per_batch))
 
 # losses
-def loss_mse(images_hr, images_sr):
-    # RGB loss
-    mse = tf.losses.mean_squared_error(images_hr, images_sr, weights=1.0)
+def loss_mse(gtruth, pred, weights=1.0):
+    # RGB color space
+    mse = tf.losses.mean_squared_error(gtruth, pred, weights=weights)
     return mse
 
-def loss_mad(images_hr, images_sr):
-    # RGB loss
-    #RGB_mad = tf.losses.absolute_difference(images_hr, images_sr, weights=1.0)
-    # OPP loss
-    images_hr = utils.image.RGB2OPP(images_hr, norm=False)
-    images_sr = utils.image.RGB2OPP(images_sr, norm=False)
-    OPP_mad = tf.losses.absolute_difference(images_hr, images_sr, weights=1.0)
-    return OPP_mad
+def loss_mad(gtruth, pred, weights=1.0):
+    # RGB color space
+    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights)
+    return RGB_mad
+
+def loss_mixed1(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
+    weights1 *= 1 - alpha
+    weights2 *= alpha
+    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights1)
+    # OPP color space - Y
+    Y_gtruth = utils.image.RGB2Y(gtruth)
+    Y_pred = utils.image.RGB2Y(pred)
+    Y_ss_ssim = (1 - utils.image.SS_SSIM(Y_gtruth, Y_pred)) * weights2
+    tf.losses.add_loss(Y_ss_ssim)
+    return RGB_mad + Y_ss_ssim
+
+def loss_mixed2(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
+    weights1 *= 1 - alpha
+    weights2 *= alpha
+    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights1)
+    # OPP color space - Y
+    Y_gtruth = utils.image.RGB2Y(gtruth)
+    Y_pred = utils.image.RGB2Y(pred)
+    Y_ms_ssim = (1 - utils.image.MS_SSIM_2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4], norm=False)) * weights2
+    tf.losses.add_loss(Y_ms_ssim)
+    return RGB_mad + Y_ms_ssim
 
 def total_loss():
     return tf.losses.get_total_loss()
@@ -118,7 +136,7 @@ def train():
             images_lr, images_hr = inputs(files, is_training=True)
         
         images_sr = model.inference(images_lr, is_training=True)
-        main_loss = loss_mad(images_hr, images_sr)
+        main_loss = loss_mixed2(images_hr, images_sr, alpha=FLAGS.mixed_alpha)
         train_loss = total_loss()
         
         global_step = tf.contrib.framework.get_or_create_global_step()

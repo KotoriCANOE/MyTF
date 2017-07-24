@@ -15,10 +15,12 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', './train.tmp',
+tf.app.flags.DEFINE_string('postfix', '',
+                            """Postfix added to train_dir, test_dir, test files, etc.""")
+tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
-tf.app.flags.DEFINE_string('test_dir', './test.tmp',
-                           """Directory where to write event logs.""")
+tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
+                           """Directory where to write event logs and test results.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
 tf.app.flags.DEFINE_integer('threads', 4,
@@ -52,16 +54,19 @@ def setup():
     return sess, summary_writer
 
 # losses
-def get_losses(images_hr, images_sr):
+def get_losses(gtruth, pred):
     # RGB loss
-    RGB_mse = tf.losses.mean_squared_error(images_hr, images_sr, weights=1.0)
-    RGB_mad = tf.losses.absolute_difference(images_hr, images_sr, weights=1.0)
+    RGB_mse = tf.losses.mean_squared_error(gtruth, pred, weights=1.0)
+    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=1.0)
     # OPP loss
-    images_hr = utils.image.RGB2OPP(images_hr, norm=False)
-    images_sr = utils.image.RGB2OPP(images_sr, norm=False)
-    OPP_mad = tf.losses.absolute_difference(images_hr, images_sr, weights=1.0)
-    Y_msssim = utils.image.MS_SSIM(images_hr[:,:,:,:1], images_sr[:,:,:,:1])
-    return RGB_mse, RGB_mad, OPP_mad, Y_msssim
+    gtruth = utils.image.RGB2OPP(gtruth, norm=False)
+    pred = utils.image.RGB2OPP(pred, norm=False)
+    OPP_mad = tf.losses.absolute_difference(gtruth, pred, weights=1.0)
+    Y_gtruth = gtruth[:,:,:,:1]
+    Y_pred = pred[:,:,:,:1]
+    Y_ss_ssim = utils.image.SS_SSIM(Y_gtruth, Y_pred)
+    Y_ms_ssim = utils.image.MS_SSIM_2(Y_gtruth, Y_pred, norm=True)
+    return RGB_mse, RGB_mad, OPP_mad, Y_ss_ssim, Y_ms_ssim
 
 def total_loss():
     return tf.losses.get_total_loss()
@@ -114,25 +119,29 @@ def test():
             # monitor losses
             for _ in range(len(ret_loss)):
                 sum_loss[_] += cur_loss[_]
-            print('batch {}, MSE (RGB) {}, MAD (RGB) {}, MAD (OPP) {}, MS-SSIM (Y) {}'.format(
-                   i, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3]))
+            print('batch {}, MSE (RGB) {}, MAD (RGB) {}, MAD (OPP) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+                   i, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3], cur_loss[4]))
             # images output
             _start = i * FLAGS.batch_size
             _stop = _start + FLAGS.batch_size
             _range = range(_start, _stop)
             ofiles = []
-            ofiles.extend([os.path.join(FLAGS.test_dir, '{:0>5}.0.LR.png'.format(_)) for _ in _range])
-            ofiles.extend([os.path.join(FLAGS.test_dir, '{:0>5}.1.HR.png'.format(_)) for _ in _range])
-            ofiles.extend([os.path.join(FLAGS.test_dir, '{:0>5}.2.SRResNet.png'.format(_)) for _ in _range])
-            ofiles.extend([os.path.join(FLAGS.test_dir, '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.0.LR.png'.format(_)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.1.HR.png'.format(_)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.2.SRResNet{}.png'.format(_, FLAGS.postfix)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
             helper.WriteFiles(cur_pngs, ofiles)
         sess.close()
         
         # summary
         mean_loss = [l / max_steps for l in sum_loss]
         psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-        print('PSNR (RGB) {}, MAD (RGB) {}, MAD (OPP) {}, MS-SSIM (Y) {}'.format(
-               psnr, mean_loss[1], mean_loss[2], mean_loss[3]))
+        print('PSNR (RGB) {}, MAD (RGB) {}, MAD (OPP) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+               psnr, mean_loss[1], mean_loss[2], mean_loss[3], mean_loss[4]))
 
 # main
 def main(argv=None):
