@@ -27,6 +27,8 @@ tf.app.flags.DEFINE_integer('threads', 4,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
+tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
+                            """Data layout format.""")
 tf.app.flags.DEFINE_integer('patch_height', 512,
                             """Block size y.""")
 tf.app.flags.DEFINE_integer('patch_width', 512,
@@ -48,25 +50,22 @@ def setup():
     with sess.graph.as_default():
         tf.set_random_seed(FLAGS.random_seed)
     #random.seed(FLAGS.random_seed)
-    #np.random.seed(FLAGS.random_seed)
+    np.random.seed(FLAGS.random_seed)
 
     summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)
     return sess, summary_writer
 
 # losses
 def get_losses(gtruth, pred):
-    # RGB loss
+    # RGB color space
     RGB_mse = tf.losses.mean_squared_error(gtruth, pred, weights=1.0)
     RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=1.0)
-    # OPP loss
-    gtruth = utils.image.RGB2OPP(gtruth, norm=False)
-    pred = utils.image.RGB2OPP(pred, norm=False)
-    OPP_mad = tf.losses.absolute_difference(gtruth, pred, weights=1.0)
-    Y_gtruth = gtruth[:,:,:,:1]
-    Y_pred = pred[:,:,:,:1]
-    Y_ss_ssim = utils.image.SS_SSIM(Y_gtruth, Y_pred)
-    Y_ms_ssim = utils.image.MS_SSIM_2(Y_gtruth, Y_pred, norm=True)
-    return RGB_mse, RGB_mad, OPP_mad, Y_ss_ssim, Y_ms_ssim
+    # OPP color space - Y
+    Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
+    Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
+    Y_ss_ssim = utils.image.SS_SSIM(Y_gtruth, Y_pred, data_format=FLAGS.data_format)
+    Y_ms_ssim = utils.image.MS_SSIM_2(Y_gtruth, Y_pred, norm=True, data_format=FLAGS.data_format)
+    return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim
 
 def total_loss():
     return tf.losses.get_total_loss()
@@ -85,30 +84,38 @@ def test():
         # setup global tensorflow state
         sess, summary_writer = setup()
         
-        # Force input pipeline to CPU:0 to avoid operations sometimes ending up on
-        # GPU and resulting in a slow down.
+        # pre-processing for input
         with tf.device('/cpu:0'):
             images_lr, images_hr = inputs(files, is_testing=True)
         
+        # model inference and losses
         images_sr = model.inference(images_lr, is_training=False)
         ret_loss = list(get_losses(images_hr, images_sr))
-        
-        # Bicubic upscaling
-        shape = tf.shape(images_lr)
-        upsize = [shape[-3] * FLAGS.scaling, shape[-2] * FLAGS.scaling]
-        images_bicubic = tf.image.resize_images(images_lr, upsize,
-                tf.image.ResizeMethod.BICUBIC, align_corners=True)
         
         # restore variables from checkpoint
         saver = tf.train.Saver()
         saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
         
-        # PNGs output
-        ret_pngs = []
-        ret_pngs.extend(helper.BatchPNG(images_lr, FLAGS.batch_size))
-        ret_pngs.extend(helper.BatchPNG(images_hr, FLAGS.batch_size))
-        ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
-        ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
+        # post-processing for output
+        with tf.device('/cpu:0'):
+            # data format conversion
+            if FLAGS.data_format == 'NCHW':
+                images_lr = utils.image.NCHW2NHWC(images_lr)
+                images_hr = utils.image.NCHW2NHWC(images_hr)
+                images_sr = utils.image.NCHW2NHWC(images_sr)
+            
+            # Bicubic upscaling
+            shape = tf.shape(images_lr)
+            upsize = [shape[-3] * FLAGS.scaling, shape[-2] * FLAGS.scaling]
+            images_bicubic = tf.image.resize_images(images_lr, upsize,
+                    tf.image.ResizeMethod.BICUBIC, align_corners=True)
+            
+            # PNGs output
+            ret_pngs = []
+            ret_pngs.extend(helper.BatchPNG(images_lr, FLAGS.batch_size))
+            ret_pngs.extend(helper.BatchPNG(images_hr, FLAGS.batch_size))
+            ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
+            ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
         # run session
         sum_loss = [0 for _ in range(len(ret_loss))]
@@ -119,8 +126,8 @@ def test():
             # monitor losses
             for _ in range(len(ret_loss)):
                 sum_loss[_] += cur_loss[_]
-            print('batch {}, MSE (RGB) {}, MAD (RGB) {}, MAD (OPP) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-                   i, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3], cur_loss[4]))
+            print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+                   i, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3]))
             # images output
             _start = i * FLAGS.batch_size
             _stop = _start + FLAGS.batch_size
@@ -140,8 +147,8 @@ def test():
         # summary
         mean_loss = [l / max_steps for l in sum_loss]
         psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-        print('PSNR (RGB) {}, MAD (RGB) {}, MAD (OPP) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-               psnr, mean_loss[1], mean_loss[2], mean_loss[3], mean_loss[4]))
+        print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+               psnr, mean_loss[1], mean_loss[2], mean_loss[3]))
 
 # main
 def main(argv=None):

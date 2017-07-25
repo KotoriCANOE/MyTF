@@ -4,6 +4,7 @@ from datetime import datetime
 import time
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.client import timeline
 sys.path.append('..')
 from utils import helper
 import utils.image
@@ -31,6 +32,8 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """Log frequency.""")
+tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
+                            """Data layout format.""")
 tf.app.flags.DEFINE_integer('patch_height', 96,
                             """Block size y.""")
 tf.app.flags.DEFINE_integer('patch_width', 96,
@@ -97,9 +100,9 @@ def loss_mixed1(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
     weights2 *= alpha
     RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights1)
     # OPP color space - Y
-    Y_gtruth = utils.image.RGB2Y(gtruth)
-    Y_pred = utils.image.RGB2Y(pred)
-    Y_ss_ssim = (1 - utils.image.SS_SSIM(Y_gtruth, Y_pred)) * weights2
+    Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
+    Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
+    Y_ss_ssim = (1 - utils.image.SS_SSIM(Y_gtruth, Y_pred, data_format=FLAGS.data_format)) * weights2
     tf.losses.add_loss(Y_ss_ssim)
     return RGB_mad + Y_ss_ssim
 
@@ -108,9 +111,10 @@ def loss_mixed2(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
     weights2 *= alpha
     RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights1)
     # OPP color space - Y
-    Y_gtruth = utils.image.RGB2Y(gtruth)
-    Y_pred = utils.image.RGB2Y(pred)
-    Y_ms_ssim = (1 - utils.image.MS_SSIM_2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4], norm=False)) * weights2
+    Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
+    Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
+    Y_ms_ssim = (1 - utils.image.MS_SSIM_2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
+        norm=False, data_format=FLAGS.data_format)) * weights2
     tf.losses.add_loss(Y_ms_ssim)
     return RGB_mad + Y_ms_ssim
 
@@ -130,18 +134,20 @@ def train():
         epoch_size, steps_per_epoch, FLAGS.num_epochs, max_steps))
     
     with tf.Graph().as_default():
-        # Force input pipeline to CPU:0 to avoid operations sometimes ending up on
-        # GPU and resulting in a slow down.
+        # pre-processing for input
         with tf.device('/cpu:0'):
             images_lr, images_hr = inputs(files, is_training=True)
         
+        # model inference and losses
         images_sr = model.inference(images_lr, is_training=True)
         main_loss = loss_mixed2(images_hr, images_sr, alpha=FLAGS.mixed_alpha)
         train_loss = total_loss()
         
+        # training step and op
         global_step = tf.contrib.framework.get_or_create_global_step()
         train_op = model.train(train_loss, global_step)
         
+        # monitored session
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
         config.gpu_options.allow_growth = True
         
@@ -151,9 +157,22 @@ def train():
                        tf.train.NanTensorHook(train_loss),
                        LoggerHook(main_loss, steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
+            # options
+            run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
+            step = 0
             # run session
             while not mon_sess.should_stop():
-                mon_sess.run(train_op)
+                if step % 5000 == 0:
+                    mon_sess.run(train_op, options=run_options, run_metadata=run_metadata)
+                    # Create the Timeline object, and write it to a json
+                    tl = timeline.Timeline(run_metadata.step_stats)
+                    ctf = tl.generate_chrome_trace_format()
+                    with open(os.path.join(FLAGS.train_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
+                        f.write(ctf)
+                else:
+                    mon_sess.run(train_op)
+                step += 1
 
 # main
 def main(argv=None):

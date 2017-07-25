@@ -96,87 +96,218 @@ def conv2d_variable(name, shape, init_factor=None, wd=None):
         regularizer(var)
     return var
 
-def conv2d(scope, last, ksize, out_channels, stride=1, padding='SAME',
-            batch_norm=0.999, is_training=True, activation='relu',
-            init_factor=1.0, wd=None):
-    # parameters
-    in_channels = last.get_shape()[-1]
-    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
-        ksize = [ksize, ksize]
-    kshape = [ksize[0], ksize[1], in_channels, out_channels]
-    kernel = conv2d_variable('weights', shape=kshape,
-                              init_factor=init_factor, wd=wd)
-    if isinstance(stride, int) or isinstance(stride, tf.Dimension):
-        stride = [1, stride, stride, 1]
-    # convolution 2D
-    last = tf.nn.conv2d(last, kernel, strides=stride, padding=padding)
-    biases = get_variable('biases', [out_channels],
-                           tf.constant_initializer(0.0))
-    last = tf.nn.bias_add(last, biases)
-    # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm,
-                                            is_training=is_training)
-    # activation function
+def apply_activation(last, activation):
     if isinstance(activation, str):
         activation = activation.lower()
     if activation and activation != 'none':
         if activation == 'relu':
-            last = tf.nn.relu(last, name=scope.name)
+            last = tf.nn.relu(last)
         elif activation == 'prelu':
-            prelu = tf.contrib.keras.layers.PReLU(shared_axes=[1, 2], name=scope.name)
+            prelu = tf.contrib.keras.layers.PReLU(shared_axes=[1, 2])
             last = prelu(last)
         elif activation[0:5] == 'lrelu':
             alpha = activation[5:]
             if alpha: alpha = float(alpha)
             else: alpha = 0.3
-            lrelu = tf.contrib.keras.layers.LeakyReLU(alpha=alpha, name=scope.name)
+            lrelu = tf.contrib.keras.layers.LeakyReLU(alpha=alpha)
             last = lrelu(last)
         else:
             raise ValueError('Unrecognized \'activation\' specified!')
         activation_summary(last)
     return last
 
-def resize_conv2d(scope, last, ksize, out_channels, scaling=2,
-                   batch_norm=None, is_training=True, activation=None,
-                   init_factor=1.0, wd=None):
+def conv2d(last, ksize, out_channels,
+           stride=1, padding='SAME', data_format='NHWC',
+           batch_norm=None, is_training=False, activation='relu',
+           init_factor=1.0, wd=None):
     # parameters
-    in_channels = last.get_shape()[-1]
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    kshape = [ksize[0], ksize[1], in_channels, out_channels]
+    if isinstance(stride, int) or isinstance(stride, tf.Dimension):
+        stride = [1, 1, stride, stride] if data_format == 'NCHW' else [1, stride, stride, 1]
+    # convolution 2D
+    kernel = conv2d_variable('weights', shape=kshape,
+                             init_factor=init_factor, wd=wd)
+    last = tf.nn.conv2d(last, kernel, strides=stride,
+                        padding=padding, data_format=data_format)
+    biases = get_variable('biases', [out_channels],
+                          tf.constant_initializer(0.0))
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
+    # batch normalization
+    if batch_norm:
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    # activation function
+    last = apply_activation(last, activation)
+    return last
+
+def depthwise_conv2d(last, ksize, channel_multiplier=1,
+                     stride=1, padding='SAME', data_format='NHWC',
+                     batch_norm=None, is_training=False, activation='relu',
+                     init_factor=1.0, wd=None):
+    # parameters
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    if isinstance(stride, int) or isinstance(stride, tf.Dimension):
+        stride = [1, 1, stride, stride] if data_format == 'NCHW' else [1, stride, stride, 1]
+    # convolution 2D
+    kernel = conv2d_variable('weights', shape=kshape,
+                             init_factor=init_factor, wd=wd)
+    last = tf.nn.depthwise_conv2d_native(last, kernel, strides=stride,
+                                         padding=padding, data_format=data_format)
+    biases = get_variable('biases', [in_channels * channel_multiplier],
+                          tf.constant_initializer(0.0))
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
+    # batch normalization
+    if batch_norm:
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    # activation function
+    last = apply_activation(last, activation)
+    return last
+
+# checkerboard artifacts free resize convolution
+# https://distill.pub/2016/deconv-checkerboard/
+def resize_conv2d(last, ksize, out_channels,
+                  scaling=2, data_format='NHWC',
+                  batch_norm=None, is_training=False, activation=None,
+                  init_factor=1.0, wd=None):
+    # parameters
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
     kshape = [ksize[0], ksize[1], out_channels, in_channels]
     shape = tf.shape(last)
-    out_shape = [shape[0], shape[1] * scaling, shape[2] * scaling, out_channels]
+    if data_format == 'NCHW':
+        out_size = [shape[2] * scaling, shape[3] * scaling]
+        out_shape = [shape[0], out_channels, out_size[0], out_size[1]]
+    else:
+        out_size = [shape[1] * scaling, shape[2] * scaling]
+        out_shape = [shape[0], out_size[0], out_size[1], out_channels]
     # nearest-neighbor upsample
-    last = tf.image.resize_nearest_neighbor(last, size=out_shape[1:3])
+    if data_format == 'NCHW':
+        last = utils.image.NCHW2NHWC(last)
+    last = tf.image.resize_nearest_neighbor(last, size=out_size)
+    if data_format == 'NCHW':
+        last = utils.image.NHWC2NCHW(last)
     # deconvolution 2D
     kernel = conv2d_variable('weights', shape=kshape,
                               init_factor=init_factor, wd=wd)
-    last = tf.nn.conv2d_transpose(last, kernel, out_shape,
-                                  strides=[1, 1, 1, 1], padding='SAME')
+    last = tf.nn.conv2d_transpose(last, kernel, out_shape, strides=[1, 1, 1, 1],
+                                  padding='SAME', data_format=data_format)
     biases = get_variable('biases', [out_channels],
                               tf.constant_initializer(0.0))
-    last = tf.nn.bias_add(last, biases)
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
     if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm,
-                                            is_training=is_training)
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
     # activation function
-    if isinstance(activation, str):
-        activation = activation.lower()
-    if activation and activation != 'none':
-        if activation == 'relu':
-            last = tf.nn.relu(last, name=scope.name)
-        elif activation == 'prelu':
-            prelu = tf.contrib.keras.layers.PReLU(shared_axes=[1, 2], name=scope.name)
-            last = prelu(last)
-        elif activation[0:5] == 'lrelu':
-            alpha = activation[5:]
-            if alpha: alpha = float(alpha)
-            else: alpha = 0.3
-            lrelu = tf.contrib.keras.layers.LeakyReLU(alpha=alpha, name=scope.name)
-            last = lrelu(last)
-        else:
-            raise ValueError('Unrecognized \'activation\' specified!')
-        activation_summary(last)
+    last = apply_activation(last, activation)
+    return last
+
+# implementation of Periodic Shuffling for sub-pixel convolution
+# https://github.com/Tetrachrome/subpixel
+def _phase_shift(I, r, shape, data_format='NHWC'):
+    if data_format == 'NCHW':
+        N, H, W = tf.shape(I)[0], shape[2], shape[3]
+        X = tf.reshape(I, (N, r[0], r[1], H, W)) # N, rH, rW, H, W
+        X = tf.split(X, H, axis=-2) # H, [N, rH, rW, 1, W]
+        X = [tf.reshape(x, (N, r[1], r[0], W)) for x in X] # H, [N, rH, rW, W]
+        X = tf.concat(X, axis=-3) # N, H*rH, rW, W
+        X = tf.split(X, W, axis=-1) # W, [N, H*rH, rW, 1]
+        X = [tf.reshape(x, (N, H*r[0], r[1])) for x in X] # W, [N, H*rH, rW]
+        X = tf.concat(X, axis=-1) # N, H*rH, W*rW
+        return tf.reshape(X, (N, 1, H*r[0], W*r[1]))
+    else:
+        N, H, W = tf.shape(I)[0], shape[1], shape[2]
+        X = tf.reshape(I, (N, H, W, r[0], r[1])) # N, H, W, rH, rW
+        X = tf.split(X, H, axis=-4) # H, [N, 1, W, rH, rW]
+        X = [tf.reshape(x, (N, W, r[1], r[0])) for x in X] # H, [N, W, rH, rW]
+        X = tf.concat(X, axis=-2) # N, W, H*rH, rW
+        X = tf.split(X, W, axis=-3) # W, [N, 1, H*rH, rW]
+        X = [tf.reshape(x, (N, H*r[0], r[1])) for x in X] # W, [N, H*rH, rW]
+        X = tf.concat(X, axis=-1) # N, H*rH, W*rW
+        return tf.reshape(X, (N, H*r[0], W*r[1], 1))
+
+def periodic_shuffling(X, r, data_format='NHWC'):
+    # require statically known shape (None, H, W, C) or (None, C, H, W)
+    if isinstance(r, int) or isinstance(r, tf.Dimension):
+        r = [r, r]
+    shape = helper.dim2int(X.get_shape())
+    if data_format == 'NCHW':
+        channels = shape[-3] // (r[0] * r[1])
+        Xc = tf.split(X, channels, axis=-3)
+        shape[-3] = r[0] * r[1]
+        X = tf.concat([_phase_shift(x, r, shape, data_format) for x in Xc], axis=-3)
+    else:
+        channels = shape[-1] // (r[0] * r[1])
+        Xc = tf.split(X, channels, axis=-1)
+        shape[-1] = r[0] * r[1]
+        X = tf.concat([_phase_shift(x, r, shape, data_format) for x in Xc], axis=-1)
+    return X
+
+def subpixel_conv2d(last, ksize, out_channels,
+                    scaling=2, padding='SAME', data_format='NHWC',
+                    batch_norm=None, is_training=False, activation=None,
+                    init_factor=1.0, wd=None):
+    # parameters
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
+        scaling = [scaling, scaling]
+    temp_channels = out_channels * scaling[0] * scaling[1]
+    kshape = [ksize[0], ksize[1], in_channels, temp_channels]
+    # convolution 2D
+    kernel = conv2d_variable('weights', shape=kshape,
+                             init_factor=init_factor, wd=wd)
+    last = tf.nn.conv2d(last, kernel, strides=[1, 1, 1, 1],
+                        padding=padding, data_format=data_format)
+    biases = get_variable('biases', [temp_channels],
+                          tf.constant_initializer(0.0))
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
+    # periodic shuffling
+    last = periodic_shuffling(last, scaling, data_format)
+    # batch normalization
+    if batch_norm:
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    # activation function
+    last = apply_activation(last, activation)
+    return last
+
+def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
+                              scaling=2, padding='SAME', data_format='NHWC',
+                              batch_norm=None, is_training=False, activation=None,
+                              init_factor=1.0, wd=None):
+    # parameters
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
+        scaling = [scaling, scaling]
+    channel_multiplier *= scaling[0] * scaling[1]
+    temp_channels = in_channels * channel_multiplier
+    kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    # convolution 2D
+    kernel = conv2d_variable('weights', shape=kshape,
+                             init_factor=init_factor, wd=wd)
+    last = tf.nn.depthwise_conv2d_native(last, kernel, strides=[1, 1, 1, 1],
+                                         padding=padding, data_format=data_format)
+    biases = get_variable('biases', [temp_channels],
+                          tf.constant_initializer(0.0))
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
+    # periodic shuffling
+    last = periodic_shuffling(last, scaling, data_format)
+    # batch normalization
+    if batch_norm:
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    # activation function
+    last = apply_activation(last, activation)
     return last
