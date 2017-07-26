@@ -16,7 +16,7 @@ tf.app.flags.DEFINE_integer('scaling', 2,
                             """Scaling ratio of the super-resolution filter.""")
 tf.app.flags.DEFINE_integer('image_channels', 3,
                             """Channels of input/output image.""")
-tf.app.flags.DEFINE_float('weight_decay', 0, #1e-4,
+tf.app.flags.DEFINE_float('weight_decay', 0, #1e-5,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
@@ -48,7 +48,7 @@ tf.app.flags.DEFINE_integer('res_blocks', 6,
                             """Number of residual blocks.""")
 tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
-tf.app.flags.DEFINE_integer('channels2', 16,
+tf.app.flags.DEFINE_integer('channels2', 32,
                             """Number of features after resize conv.""")
 tf.app.flags.DEFINE_float('batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
@@ -108,7 +108,6 @@ def inference(images_lr, is_training=False):
                              init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
     with tf.variable_scope('skip_connection{}'.format(l)) as scope:
         last = tf.add(last, skip1, 'elementwise_sum')
-    '''
     # resize conv layer
     l += 1
     with tf.variable_scope('resize_conv{}'.format(l)) as scope:
@@ -124,6 +123,7 @@ def inference(images_lr, is_training=False):
                                       scaling=FLAGS.scaling, data_format=FLAGS.data_format,
                                       batch_norm=None, is_training=is_training, activation=FLAGS.activation,
                                       init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
+    '''
     # final conv layer
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -172,7 +172,7 @@ def train(total_loss, global_step):
     # apply gradient
     apply_gradient_op = opt.apply_gradients(grads_and_vars, global_step)
     train_ops.append(apply_gradient_op)
-
+    '''
     # add histograms for trainable variables
     for var in tf.trainable_variables():
         tf.summary.histogram(var.op.name, var)
@@ -188,7 +188,7 @@ def train(total_loss, global_step):
                 FLAGS.train_moving_average, global_step, name='train_moving_average')
         variable_averages_op = variable_averages.apply(tf.trainable_variables())
         train_ops.append(variable_averages_op)
-    
+    '''
     # generate operation
     with tf.control_dependencies(train_ops):
         train_op = tf.no_op(name='train')

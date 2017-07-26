@@ -24,7 +24,7 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
-tf.app.flags.DEFINE_integer('threads', 4,
+tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
@@ -113,8 +113,8 @@ def loss_mixed2(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
     # OPP color space - Y
     Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
     Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
-    Y_ms_ssim = (1 - utils.image.MS_SSIM_2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
-        norm=False, data_format=FLAGS.data_format)) * weights2
+    Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
+                norm=False, data_format=FLAGS.data_format)) * weights2
     tf.losses.add_loss(Y_ms_ssim)
     return RGB_mad + Y_ms_ssim
 

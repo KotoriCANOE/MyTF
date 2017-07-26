@@ -2,6 +2,7 @@ import sys
 import os
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.client import timeline
 sys.path.append('..')
 from utils import helper
 import utils.image
@@ -23,7 +24,7 @@ tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
-tf.app.flags.DEFINE_integer('threads', 4,
+tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -64,7 +65,7 @@ def get_losses(gtruth, pred):
     Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
     Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
     Y_ss_ssim = utils.image.SS_SSIM(Y_gtruth, Y_pred, data_format=FLAGS.data_format)
-    Y_ms_ssim = utils.image.MS_SSIM_2(Y_gtruth, Y_pred, norm=True, data_format=FLAGS.data_format)
+    Y_ms_ssim = utils.image.MS_SSIM2(Y_gtruth, Y_pred, norm=True, data_format=FLAGS.data_format)
     return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim
 
 def total_loss():
@@ -117,19 +118,31 @@ def test():
             ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
             ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
+        # options
+        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        run_metadata = tf.RunMetadata()
         # run session
         sum_loss = [0 for _ in range(len(ret_loss))]
-        for i in range(max_steps):
-            cur_ret = sess.run(ret_loss + ret_pngs)
+        for step in range(max_steps):
+            ret = ret_loss + ret_pngs
+            if step % 20 == 0:
+                cur_ret = sess.run(ret, options=run_options, run_metadata=run_metadata)
+                # Create the Timeline object, and write it to a json
+                tl = timeline.Timeline(run_metadata.step_stats)
+                ctf = tl.generate_chrome_trace_format()
+                with open(os.path.join(FLAGS.test_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
+                    f.write(ctf)
+            else:
+                cur_ret = sess.run(ret)
             cur_loss = cur_ret[0:len(ret_loss)]
             cur_pngs = cur_ret[len(ret_loss):]
             # monitor losses
             for _ in range(len(ret_loss)):
                 sum_loss[_] += cur_loss[_]
             print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-                   i, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3]))
+                   step, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3]))
             # images output
-            _start = i * FLAGS.batch_size
+            _start = step * FLAGS.batch_size
             _stop = _start + FLAGS.batch_size
             _range = range(_start, _stop)
             ofiles = []

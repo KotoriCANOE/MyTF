@@ -136,8 +136,10 @@ def inputs(files, is_training=False, is_testing=False):
         data = tf.clip_by_value(data, 0.0, 1.0)
         label = tf.clip_by_value(label, 0.0, 1.0)
         # data format conversion
-        data.set_shape([patch_height // scaling, patch_width // scaling, channels])
-        label.set_shape([patch_height, patch_width, channels])
+        data.set_shape([None, None, channels])
+        label.set_shape([None, None, channels])
+        #data.set_shape([patch_height // scaling, patch_width // scaling, channels])
+        #label.set_shape([patch_height, patch_width, channels])
         if FLAGS.data_format == 'NCHW':
             data = tf.transpose(data, (2, 0, 1))
             label = tf.transpose(label, (2, 0, 1))

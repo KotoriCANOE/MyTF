@@ -2,6 +2,7 @@ import re
 import numpy as np
 import tensorflow as tf
 from utils import helper
+import utils.image
 
 # flags
 FLAGS = tf.app.flags.FLAGS
@@ -113,21 +114,21 @@ def apply_activation(last, activation):
             last = lrelu(last)
         else:
             raise ValueError('Unrecognized \'activation\' specified!')
-        activation_summary(last)
+        #activation_summary(last)
     return last
 
 def conv2d(last, ksize, out_channels,
            stride=1, padding='SAME', data_format='NHWC',
-           batch_norm=None, is_training=False, activation='relu',
+           batch_norm=None, is_training=False, activation=None,
            init_factor=1.0, wd=None):
     # parameters
     in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
-    kshape = [ksize[0], ksize[1], in_channels, out_channels]
     if isinstance(stride, int) or isinstance(stride, tf.Dimension):
         stride = [1, 1, stride, stride] if data_format == 'NCHW' else [1, stride, stride, 1]
     # convolution 2D
+    kshape = [ksize[0], ksize[1], in_channels, out_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              init_factor=init_factor, wd=wd)
     last = tf.nn.conv2d(last, kernel, strides=stride,
@@ -145,21 +146,54 @@ def conv2d(last, ksize, out_channels,
 
 def depthwise_conv2d(last, ksize, channel_multiplier=1,
                      stride=1, padding='SAME', data_format='NHWC',
-                     batch_norm=None, is_training=False, activation='relu',
+                     batch_norm=None, is_training=False, activation=None,
                      init_factor=1.0, wd=None):
     # parameters
     in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    out_channels = in_channels * channel_multiplier
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
-    kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
     if isinstance(stride, int) or isinstance(stride, tf.Dimension):
         stride = [1, 1, stride, stride] if data_format == 'NCHW' else [1, stride, stride, 1]
     # convolution 2D
-    kernel = conv2d_variable('weights', shape=kshape,
-                             init_factor=init_factor, wd=wd)
-    last = tf.nn.depthwise_conv2d_native(last, kernel, strides=stride,
+    depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
+                                       init_factor=init_factor, wd=wd)
+    last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=stride,
                                          padding=padding, data_format=data_format)
-    biases = get_variable('biases', [in_channels * channel_multiplier],
+    biases = get_variable('biases', [out_channels],
+                          tf.constant_initializer(0.0))
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
+    # batch normalization
+    if batch_norm:
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    # activation function
+    last = apply_activation(last, activation)
+    return last
+
+def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
+                     stride=1, padding='SAME', data_format='NHWC',
+                     batch_norm=None, is_training=False, activation=None,
+                     init_factor=1.0, wd=None):
+    # parameters
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    temp_channels = in_channels * channel_multiplier
+    if out_channels is None: out_channels = temp_channels
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    if isinstance(stride, int) or isinstance(stride, tf.Dimension):
+        stride = [1, 1, stride, stride] if data_format == 'NCHW' else [1, stride, stride, 1]
+    # convolution 2D
+    depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    pointwise_kshape = [1, 1, temp_channels, out_channels]
+    depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
+                                       init_factor=init_factor, wd=wd)
+    pointwise_kernel = conv2d_variable('pointwise_weights', shape=pointwise_kshape,
+                                       init_factor=init_factor, wd=wd)
+    last = tf.nn.separable_conv2d(last, depthwise_kernel, pointwise_kernel, strides=stride,
+                                  padding=padding, data_format=data_format)
+    biases = get_variable('biases', [out_channels],
                           tf.constant_initializer(0.0))
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
@@ -180,7 +214,6 @@ def resize_conv2d(last, ksize, out_channels,
     in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
-    kshape = [ksize[0], ksize[1], out_channels, in_channels]
     shape = tf.shape(last)
     if data_format == 'NCHW':
         out_size = [shape[2] * scaling, shape[3] * scaling]
@@ -195,10 +228,50 @@ def resize_conv2d(last, ksize, out_channels,
     if data_format == 'NCHW':
         last = utils.image.NHWC2NCHW(last)
     # deconvolution 2D
+    kshape = [ksize[0], ksize[1], out_channels, in_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                               init_factor=init_factor, wd=wd)
     last = tf.nn.conv2d_transpose(last, kernel, out_shape, strides=[1, 1, 1, 1],
                                   padding='SAME', data_format=data_format)
+    biases = get_variable('biases', [out_channels],
+                              tf.constant_initializer(0.0))
+    last = tf.nn.bias_add(last, biases, data_format=data_format)
+    # batch normalization
+    if batch_norm:
+        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    # activation function
+    last = apply_activation(last, activation)
+    return last
+
+def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
+                            scaling=2, data_format='NHWC',
+                            batch_norm=None, is_training=False, activation=None,
+                            init_factor=1.0, wd=None):
+    # parameters
+    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    out_channels = in_channels // channel_multiplier
+    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+        ksize = [ksize, ksize]
+    shape = tf.shape(last)
+    if data_format == 'NCHW':
+        out_size = [shape[2] * scaling, shape[3] * scaling]
+        out_shape = [shape[0], out_channels, out_size[0], out_size[1]]
+    else:
+        out_size = [shape[1] * scaling, shape[2] * scaling]
+        out_shape = [shape[0], out_size[0], out_size[1], out_channels]
+    # nearest-neighbor upsample
+    if data_format == 'NCHW':
+        last = utils.image.NCHW2NHWC(last)
+    last = tf.image.resize_nearest_neighbor(last, size=out_size)
+    if data_format == 'NCHW':
+        last = utils.image.NHWC2NCHW(last)
+    # deconvolution 2D
+    depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
+                                       init_factor=init_factor, wd=wd)
+    last = tf.nn.depthwise_conv2d_native_backprop_input(out_shape, depthwise_kernel, last,
+            strides=[1, 1, 1, 1], padding='SAME', data_format=data_format)
     biases = get_variable('biases', [out_channels],
                               tf.constant_initializer(0.0))
     last = tf.nn.bias_add(last, biases, data_format=data_format)
@@ -262,8 +335,8 @@ def subpixel_conv2d(last, ksize, out_channels,
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
         scaling = [scaling, scaling]
     temp_channels = out_channels * scaling[0] * scaling[1]
-    kshape = [ksize[0], ksize[1], in_channels, temp_channels]
     # convolution 2D
+    kshape = [ksize[0], ksize[1], in_channels, temp_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              init_factor=init_factor, wd=wd)
     last = tf.nn.conv2d(last, kernel, strides=[1, 1, 1, 1],
@@ -292,14 +365,14 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
         scaling = [scaling, scaling]
     channel_multiplier *= scaling[0] * scaling[1]
-    temp_channels = in_channels * channel_multiplier
-    kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    out_channels = in_channels * channel_multiplier
     # convolution 2D
-    kernel = conv2d_variable('weights', shape=kshape,
+    depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
+    depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
                              init_factor=init_factor, wd=wd)
-    last = tf.nn.depthwise_conv2d_native(last, kernel, strides=[1, 1, 1, 1],
+    last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=[1, 1, 1, 1],
                                          padding=padding, data_format=data_format)
-    biases = get_variable('biases', [temp_channels],
+    biases = get_variable('biases', [out_channels],
                           tf.constant_initializer(0.0))
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # periodic shuffling
