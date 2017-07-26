@@ -5,6 +5,13 @@ def DivUp(dividend, divisor):
     return (dividend + divisor - 1) // divisor
 
 # make directory
+def make_dirs(path):
+    import locale
+    encoding = locale.getpreferredencoding()
+    path = path.encode(encoding)
+    if not tf.gfile.Exists(path):
+        tf.gfile.MakeDirs(path)
+
 def mkdir(path):
     import os
     # remove front blanks
@@ -25,10 +32,10 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
     if encoding is True: encoding = locale.getpreferredencoding()
     if filter_ext is not None: filter_ext = [e.lower() for e in filter_ext]
     files = []
-    for (dirpath, dirnames, filenames) in os.walk(path):
-        for f in filenames:
+    for (dir_path, dir_names, file_names) in os.walk(path):
+        for f in file_names:
             if os.path.splitext(f)[1].lower() in filter_ext:
-                file_path = os.path.join(dirpath, f)
+                file_path = os.path.join(dir_path, f)
                 if encoding: file_path = file_path.encode(encoding)
                 files.append(file_path)
         if not recursive: break
