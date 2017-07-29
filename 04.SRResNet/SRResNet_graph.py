@@ -24,7 +24,11 @@ tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
 # build and save graph
 def graph():
     # place holder
-    input = tf.placeholder(tf.float32, (None, FLAGS.image_channels, None, None), name='Input')
+    if FLAGS.data_format == 'NCHW':
+        shape = (None, FLAGS.image_channels, None, None)
+    else:
+        shape = (None, None, None, FLAGS.image_channels)
+    input = tf.placeholder(tf.float32, shape, name='Input')
     
     # model inference
     output = model.inference(input, is_training=False)

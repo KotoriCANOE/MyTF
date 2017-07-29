@@ -1,5 +1,6 @@
 import sys
 import tensorflow as tf
+import numpy as np
 
 # flags
 FLAGS = tf.app.flags.FLAGS
@@ -10,6 +11,7 @@ def inputs(files, is_training=False, is_testing=False):
     threads = FLAGS.threads
     scaling = FLAGS.scaling
     if is_training: num_epochs = FLAGS.num_epochs
+    data_format = FLAGS.data_format
     patch_height = FLAGS.patch_height
     patch_width = FLAGS.patch_width
     batch_size = FLAGS.batch_size
@@ -109,51 +111,208 @@ def inputs(files, is_training=False, is_testing=False):
             offset_width = (width - cropped_width) // 2
             block = tf.image.crop_to_bounding_box(block, offset_height, offset_width,
                                                   cropped_height, cropped_width)
+        # convert dtype
         block = tf.image.convert_image_dtype(block, dtype, saturate=False)
+        # pre-downscale
+        def c_f1():
+            label_size = [patch_height, patch_width]
+            return tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
+        block = tf.cond(tf.not_equal(dscale, 1), c_f1, lambda: block)
+        # random color augmentation
         if is_training and FLAGS.color_augmentation > 0:
             block = tf.image.random_saturation(block, 1 - FLAGS.color_augmentation, 1 + FLAGS.color_augmentation)
             block = tf.image.random_brightness(block, FLAGS.color_augmentation)
             block = tf.image.random_contrast(block, 1 - FLAGS.color_augmentation, 1 + FLAGS.color_augmentation)
-        # process 2
+        # data format conversion
+        block.set_shape([None, None, channels])
+        if data_format == 'NCHW':
+            block = tf.transpose(block, (2, 0, 1))
+        # return
+        return block
+        '''
+        # resize
         data_size = [patch_height // scaling, patch_width // scaling]
         data = tf.image.resize_images(block, data_size, tf.image.ResizeMethod.AREA)
-        '''
-        if dscale != 1:
-            label_size = [patch_height, patch_width]
-            label = tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
-        else:
-            label = block
-        '''
+        #if dscale != 1:
+        #    label_size = [patch_height, patch_width]
+        #    label = tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
+        #else:
+        #    label = block
         def c_f1():
             label_size = [patch_height, patch_width]
             return tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
         label = tf.cond(tf.not_equal(dscale, 1), c_f1, lambda: block)
-        # process 3
-        data_shape = [patch_height // scaling, patch_width // scaling, channels]
-        if is_training and FLAGS.noise_level > 0:
-            noise = tf.random_normal(data_shape, mean=0.0, stddev=FLAGS.noise_level, dtype=data.dtype)
-            data = tf.add(data, noise)
+        # return
+        return data, label
+        '''
+    
+    import vapoursynth as vs
+    
+    core = vs.get_core(threads=1)
+    src_blk = core.std.BlankClip(None, patch_width, patch_height,
+                                 format=vs.RGBS, length=(1 << 31) - 1)
+    dst_blk = core.std.BlankClip(None, patch_width // scaling, patch_height // scaling,
+                                 format=vs.RGBS, length=(1 << 31) - 1)
+    src_arr_ref = [None]
+    
+    def src_func(n, f):
+        f_out = f.copy()
+        planes = f_out.format.num_planes
+        # output
+        for p in range(planes):
+            f_arr = np.array(f_out.get_write_array(p), copy=False)
+            np.copyto(f_arr, src_arr_ref[0][p, :, :] if data_format == 'NCHW' else src_arr_ref[0][:, :, p])
+        return f_out
+    src = src_blk.std.ModifyFrame(src_blk, src_func)
+    
+    def eval_func(n):
+        clip = src
+        rand_val = np.random.uniform(-1, 1)
+        abs_rand = np.abs(rand_val)
+        dw = patch_width // scaling
+        dh = patch_height // scaling
+        # random gamma-to-linear
+        if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
+        # random resizers
+        if abs_rand < 0.05:
+            clip = clip.resize.Bilinear(dw, dh)
+        elif abs_rand < 0.1:
+            clip = clip.resize.Spline16(dw, dh)
+        elif abs_rand < 0.15:
+            clip = clip.resize.Spline36(dw, dh)
+        elif abs_rand < 0.3: # Lanczos taps=[3, 24)
+            taps = int(np.clip(np.random.exponential(3), 0, 20)) + 3
+            clip = clip.resize.Lanczos(dw, dh, filter_param_a=taps)
+        elif abs_rand < 0.5: # Catmull-Rom
+            b = np.random.normal(0, 1/6)
+            c = (1 - b) * 0.5
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+        elif abs_rand < 0.65: # standard Bicubic
+            b = np.random.normal(1/3, 1/6)
+            c = (1 - b) * 0.5
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+        elif abs_rand < 0.8: # sharp Bicubic
+            b = np.random.normal(-0.5, 0.25)
+            c = b * -0.5
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+        elif abs_rand < 0.9: # soft Bicubic
+            b = np.random.normal(0.75, 0.25)
+            c = 1 - b
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+        else: # arbitrary Bicubic
+            b = np.random.normal(0, 0.5)
+            c = np.random.normal(0.25, 0.25)
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+        # random linear-to-gamma
+        if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        # return
+        return clip
+    dst = dst_blk.std.FrameEval(eval_func)
+    
+    from scipy import ndimage
+    frame_index_ref = [0]
+    parse2_dict = {'src_arr_ref': src_arr_ref, 'dst': dst, 'frame_index_ref': frame_index_ref}
+    
+    def parse2_pyfunc(label, idict):
+        channel_index = 0 if data_format == 'NCHW' else -1
+        # input dictionary
+        src_arr_ref = idict['src_arr_ref']
+        dst = idict['dst']
+        frame_index_ref = idict['frame_index_ref']
+        # processing using vs
+        src_arr_ref[0] = label
+        f_dst = dst.get_frame(frame_index_ref[0])
+        frame_index_ref[0] += 1
+        # vs.VideoFrame to np.ndarray
+        data = []
+        planes = f_dst.format.num_planes
+        for p in range(planes):
+            f_arr = np.array(f_dst.get_read_array(p), copy=False)
+            data.append(f_arr)
+        data = np.stack(data, axis=channel_index)
+        # noise spatial correlation
+        def noise_correlation(noise, corr):
+            if corr > 0:
+                sigma = np.random.normal(corr, corr)
+                if sigma > 0.25:
+                    sigma = [0, sigma, sigma] if data_format == 'NCHW' else [sigma, sigma, 0]
+                    noise = ndimage.gaussian_filter(noise, sigma, truncate=2.0)
+            return noise
+        # add Gaussian noise of random scale and random spatial correlation
+        if FLAGS.noise_scale > 0:
+            rand_val = np.random.uniform(0, 1)
+            scale = np.random.exponential(FLAGS.noise_scale)
+            if rand_val >= 0.2 and scale > 0.002: # add noise
+                noise_shape = list(data.shape)
+                if rand_val < 0.35: # RGB noise
+                    noise = np.random.normal(0.0, scale, noise_shape).astype(np.float32)
+                    noise = noise_correlation(noise, FLAGS.noise_corr)
+                else: # Y/YUV noise
+                    noise_shape[channel_index] = 1
+                    noise_y = np.random.normal(0.0, scale, noise_shape).astype(np.float32)
+                    noise_y = noise_correlation(noise_y, FLAGS.noise_corr)
+                    scale_uv = np.random.exponential(FLAGS.noise_scale / 2)
+                    if rand_val < 0.55 and scale_uv > 0.002: # YUV noise
+                        noise_u = np.random.normal(0.0, scale_uv, noise_shape).astype(np.float32)
+                        noise_u = noise_correlation(noise_u, FLAGS.noise_corr * 1.5)
+                        noise_v = np.random.normal(0.0, scale_uv, noise_shape).astype(np.float32)
+                        noise_v = noise_correlation(noise_v, FLAGS.noise_corr * 1.5)
+                        rand_val2 = np.random.uniform(0, 1)
+                        if rand_val2 < 0.3: # Rec.601
+                            Kr = 0.299
+                            Kg = 0.587
+                            Kb = 0.114
+                        elif rand_val2 < 0.9: # Rec.709
+                            Kr = 0.2126
+                            Kg = 0.7152
+                            Kb = 0.0722
+                        else: # Rec.2020
+                            Kr = 0.2627
+                            Kg = 0.6780
+                            Kb = 0.0593
+                        noise_r = noise_y + ((1 - Kr) / 2) * noise_v
+                        noise_b = noise_y + ((1 - Kb) / 2) * noise_u
+                        noise_g = (1 / Kg) * noise_y - (Kr / Kg) * noise_r - (Kb / Kg) * noise_b
+                        noise = [noise_r, noise_g, noise_b]
+                    else:
+                        noise = [noise_y, noise_y, noise_y]
+                    noise = np.concatenate(noise, axis=channel_index)
+                # adding noise
+                data += noise
+        # return
+        return data, label
+    
+    def parse3_func(data, label):
+        # final process
         data = tf.clip_by_value(data, 0.0, 1.0)
         label = tf.clip_by_value(label, 0.0, 1.0)
         # data format conversion
-        data.set_shape([None, None, channels])
-        label.set_shape([None, None, channels])
-        #data.set_shape([patch_height // scaling, patch_width // scaling, channels])
-        #label.set_shape([patch_height, patch_width, channels])
-        if FLAGS.data_format == 'NCHW':
-            data = tf.transpose(data, (2, 0, 1))
-            label = tf.transpose(label, (2, 0, 1))
+        if data_format == 'NCHW':
+            data.set_shape([channels, None, None])
+            label.set_shape([channels, None, None])
+            #data.set_shape([channels, patch_height // scaling, patch_width // scaling])
+            #label.set_shape([channels, patch_height, patch_width])
+        else:
+            data.set_shape([None, None, channels])
+            label.set_shape([None, None, channels])
+            #data.set_shape([patch_height // scaling, patch_width // scaling, channels])
+            #label.set_shape([patch_height, patch_width, channels])
         # return
         return data, label
-
+    
     # Dataset API
     dataset = tf.contrib.data.Dataset.from_tensor_slices(tf.constant(files))
     dataset = dataset.map(parse1_func, num_threads=threads,
                           output_buffer_size=threads * 64)
+    dataset = dataset.map(lambda label: tf.py_func(lambda label: parse2_pyfunc(label, parse2_dict),
+                              [label], [tf.float32, tf.float32]),
+                          num_threads=1, output_buffer_size=threads * 64)
+    dataset = dataset.map(parse3_func, num_threads=threads,
+                          output_buffer_size=threads * 64)
     if is_training: dataset = dataset.shuffle(buffer_size)
     dataset = dataset.batch(batch_size)
     if is_training: dataset = dataset.repeat(num_epochs)
-
+    
     # return iterator
     iterator = dataset.make_one_shot_iterator()
     next_data, next_label = iterator.get_next()

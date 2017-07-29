@@ -36,6 +36,10 @@ tf.app.flags.DEFINE_integer('patch_width', 512,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Batch size.""")
+tf.app.flags.DEFINE_float('noise_scale', 0.01,
+                            """STD of additive Gaussian random noise.""")
+tf.app.flags.DEFINE_float('noise_corr', 0.75,
+                            """Spatial correlation of the Gaussian random noise.""")
 
 # constants
 TESTSET_PATH = r'..\Dataset.SR\Test'
@@ -122,9 +126,9 @@ def test():
         run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
         run_metadata = tf.RunMetadata()
         # run session
+        ret = ret_loss + ret_pngs
         sum_loss = [0 for _ in range(len(ret_loss))]
         for step in range(max_steps):
-            ret = ret_loss + ret_pngs
             if step % 20 == 0:
                 cur_ret = sess.run(ret, options=run_options, run_metadata=run_metadata)
                 # Create the Timeline object, and write it to a json
@@ -140,7 +144,7 @@ def test():
             for _ in range(len(ret_loss)):
                 sum_loss[_] += cur_loss[_]
             print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-                   step, cur_loss[0], cur_loss[1], cur_loss[2], cur_loss[3]))
+                   step, *cur_loss))
             # images output
             _start = step * FLAGS.batch_size
             _stop = _start + FLAGS.batch_size
@@ -161,7 +165,7 @@ def test():
         mean_loss = [l / max_steps for l in sum_loss]
         psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
         print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-               psnr, mean_loss[1], mean_loss[2], mean_loss[3]))
+               psnr, *mean_loss[1:]))
 
 # main
 def main(argv=None):

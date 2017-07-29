@@ -16,11 +16,11 @@ tf.app.flags.DEFINE_integer('scaling', 2,
                             """Scaling ratio of the super-resolution filter.""")
 tf.app.flags.DEFINE_integer('image_channels', 3,
                             """Channels of input/output image.""")
-tf.app.flags.DEFINE_float('weight_decay', 0, #1e-5,
+tf.app.flags.DEFINE_float('weight_decay', 1e-5,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_min', 0.0,
+tf.app.flags.DEFINE_float('lr_min', 1e-8,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 1e3,
                             """Steps after which learning rate decays""")
@@ -65,6 +65,7 @@ tf.app.flags.DEFINE_float('init_activation', 1.0,
 def inference(images_lr, is_training=False):
     print('k_first={}, k_last={}, res_blocks={}, channels={}, channels2={}'.format(
         FLAGS.k_first, FLAGS.k_last, FLAGS.res_blocks, FLAGS.channels, FLAGS.channels2))
+    weight_decay = FLAGS.weight_decay if is_training else None
     # channels
     image_channels = FLAGS.image_channels
     channels = FLAGS.channels
@@ -78,43 +79,46 @@ def inference(images_lr, is_training=False):
         last = layers.conv2d(last, ksize=FLAGS.k_first, out_channels=channels,
                              stride=1, padding='SAME', data_format=FLAGS.data_format,
                              batch_norm=None, is_training=is_training, activation=FLAGS.activation,
-                             init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
+                             init_factor=FLAGS.init_activation, wd=weight_decay)
     skip1 = last
     # residual blocks
     rb = 0
+    skip2 = last
     while rb < FLAGS.res_blocks:
         rb += 1
-        skip2 = last
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
-                                 init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
+                                 init_factor=FLAGS.init_activation, wd=weight_decay)
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                 init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
+                                 init_factor=FLAGS.init_factor, wd=weight_decay)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
+            skip2 = last
+            last = layers.apply_activation(last, activation=FLAGS.activation)
     # skip connection
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
         last = layers.conv2d(last, ksize=3, out_channels=channels,
                              stride=1, padding='SAME', data_format=FLAGS.data_format,
                              batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                             init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
+                             init_factor=FLAGS.init_factor, wd=weight_decay)
     with tf.variable_scope('skip_connection{}'.format(l)) as scope:
         last = tf.add(last, skip1, 'elementwise_sum')
+        last = layers.apply_activation(last, activation=FLAGS.activation)
     # resize conv layer
     l += 1
     with tf.variable_scope('resize_conv{}'.format(l)) as scope:
         last = layers.resize_conv2d(last, ksize=3, out_channels=channels2,
                                     scaling=FLAGS.scaling, data_format=FLAGS.data_format,
                                     batch_norm=None, is_training=is_training, activation=FLAGS.activation,
-                                    init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
+                                    init_factor=FLAGS.init_activation, wd=weight_decay)
     '''
     # sub-pixel conv layer
     l += 1
@@ -122,7 +126,7 @@ def inference(images_lr, is_training=False):
         last = layers.subpixel_conv2d(last, ksize=3, out_channels=channels2,
                                       scaling=FLAGS.scaling, data_format=FLAGS.data_format,
                                       batch_norm=None, is_training=is_training, activation=FLAGS.activation,
-                                      init_factor=FLAGS.init_activation, wd=FLAGS.weight_decay)
+                                      init_factor=FLAGS.init_activation, wd=weight_decay)
     '''
     # final conv layer
     l += 1
@@ -130,12 +134,14 @@ def inference(images_lr, is_training=False):
         last = layers.conv2d(last, ksize=FLAGS.k_last, out_channels=image_channels,
                              stride=1, padding='SAME', data_format=FLAGS.data_format,
                              batch_norm=None, is_training=is_training, activation=None,
-                             init_factor=FLAGS.init_factor, wd=FLAGS.weight_decay)
+                             init_factor=FLAGS.init_factor, wd=weight_decay)
     # return SR image
     print('Totally {} convolutional layers.'.format(l))
     return last
 
 def train(total_loss, global_step):
+    print('lr: {}, decay steps: {}, decay factor: {}, min: {}, weight decay: {}'.format(
+        FLAGS.learning_rate, FLAGS.lr_decay_steps, FLAGS.lr_decay_factor, FLAGS.lr_min, FLAGS.weight_decay))
     # decay the learning rate exponentially based on the number of steps
     lr = FLAGS.learning_rate
     if FLAGS.lr_decay_steps > 0 and FLAGS.lr_decay_factor != 1:

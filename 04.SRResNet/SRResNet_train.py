@@ -44,8 +44,10 @@ tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
 tf.app.flags.DEFINE_float('color_augmentation', 0.05,
                             """Amount of random color augmentations.""")
-tf.app.flags.DEFINE_float('noise_level', 0,
-                            """STD of additive normal dist. random noise.""")
+tf.app.flags.DEFINE_float('noise_scale', 0.01,
+                            """STD of additive Gaussian random noise.""")
+tf.app.flags.DEFINE_float('noise_corr', 0.75,
+                            """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_float('mixed_alpha', 0.50,
                             """blend weight for mixed loss.""")
 
