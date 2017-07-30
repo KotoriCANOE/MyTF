@@ -42,6 +42,8 @@ tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
+tf.app.flags.DEFINE_boolean('pre_down', True,
+                            """Pre-downscale large image for (probably) higher quality data.""")
 tf.app.flags.DEFINE_float('color_augmentation', 0.05,
                             """Amount of random color augmentations.""")
 tf.app.flags.DEFINE_float('noise_scale', 0.01,

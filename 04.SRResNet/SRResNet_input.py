@@ -9,6 +9,7 @@ def inputs(files, is_training=False, is_testing=False):
     # parameters
     channels = FLAGS.image_channels
     threads = FLAGS.threads
+    threads_py = FLAGS.threads if not is_testing else 1
     scaling = FLAGS.scaling
     if is_training: num_epochs = FLAGS.num_epochs
     data_format = FLAGS.data_format
@@ -16,6 +17,7 @@ def inputs(files, is_training=False, is_testing=False):
     patch_width = FLAGS.patch_width
     batch_size = FLAGS.batch_size
     if is_training: buffer_size = FLAGS.buffer_size
+    epoch_size = len(files)
 
     # dataset mapping function
     def parse1_func(filename):
@@ -28,7 +30,7 @@ def inputs(files, is_training=False, is_testing=False):
         width = shape[-2]
         # pre down-scale for high resolution image
         dscale = 1
-        if is_training:
+        if is_training and FLAGS.pre_down:
             '''
             if (width >= 3072 and height >= 1536) or (width >= 1536 and height >= 3072):
                 dscale = 3
@@ -47,7 +49,7 @@ def inputs(files, is_training=False, is_testing=False):
             dscale = c_t(3072, 1536, lambda: 3,
                 lambda: c_t(1024, 512, lambda: 2, lambda: 1)
             )
-        elif is_testing:
+        elif is_testing and FLAGS.pre_down:
             '''
             if (width >= 3072 and height >= 3072):
                 dscale = 4
@@ -129,31 +131,20 @@ def inputs(files, is_training=False, is_testing=False):
             block = tf.transpose(block, (2, 0, 1))
         # return
         return block
-        '''
-        # resize
-        data_size = [patch_height // scaling, patch_width // scaling]
-        data = tf.image.resize_images(block, data_size, tf.image.ResizeMethod.AREA)
-        #if dscale != 1:
-        #    label_size = [patch_height, patch_width]
-        #    label = tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
-        #else:
-        #    label = block
-        def c_f1():
-            label_size = [patch_height, patch_width]
-            return tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
-        label = tf.cond(tf.not_equal(dscale, 1), c_f1, lambda: block)
-        # return
-        return data, label
-        '''
     
+    # tf.py_func processing using vapoursynth, numpy, etc.
+    import threading
     import vapoursynth as vs
+    from scipy import ndimage
     
-    core = vs.get_core(threads=1)
-    src_blk = core.std.BlankClip(None, patch_width, patch_height,
-                                 format=vs.RGBS, length=(1 << 31) - 1)
-    dst_blk = core.std.BlankClip(None, patch_width // scaling, patch_height // scaling,
-                                 format=vs.RGBS, length=(1 << 31) - 1)
-    src_arr_ref = [None]
+    _lock = threading.Lock()
+    _index_ref = [0]
+    _src_ref = [None for _ in range(epoch_size)]
+    core = vs.get_core(threads=threads_py)
+    _src_blk = core.std.BlankClip(None, patch_width, patch_height,
+                                 format=vs.RGBS, length=epoch_size)
+    _dst_blk = core.std.BlankClip(None, patch_width // scaling, patch_height // scaling,
+                                 format=vs.RGBS, length=epoch_size)
     
     def src_func(n, f):
         f_out = f.copy()
@@ -161,12 +152,12 @@ def inputs(files, is_training=False, is_testing=False):
         # output
         for p in range(planes):
             f_arr = np.array(f_out.get_write_array(p), copy=False)
-            np.copyto(f_arr, src_arr_ref[0][p, :, :] if data_format == 'NCHW' else src_arr_ref[0][:, :, p])
+            np.copyto(f_arr, _src_ref[n][p, :, :] if data_format == 'NCHW' else _src_ref[n][:, :, p])
         return f_out
-    src = src_blk.std.ModifyFrame(src_blk, src_func)
+    _src = _src_blk.std.ModifyFrame(_src_blk, src_func)
     
     def eval_func(n):
-        clip = src
+        clip = _src
         rand_val = np.random.uniform(-1, 1)
         abs_rand = np.abs(rand_val)
         dw = patch_width // scaling
@@ -207,22 +198,19 @@ def inputs(files, is_training=False, is_testing=False):
         if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         # return
         return clip
-    dst = dst_blk.std.FrameEval(eval_func)
+    _dst = _dst_blk.std.FrameEval(eval_func)
     
-    from scipy import ndimage
-    frame_index_ref = [0]
-    parse2_dict = {'src_arr_ref': src_arr_ref, 'dst': dst, 'frame_index_ref': frame_index_ref}
-    
-    def parse2_pyfunc(label, idict):
+    def parse2_pyfunc(label):
         channel_index = 0 if data_format == 'NCHW' else -1
-        # input dictionary
-        src_arr_ref = idict['src_arr_ref']
-        dst = idict['dst']
-        frame_index_ref = idict['frame_index_ref']
+        # safely acquire and increase shared index
+        _lock.acquire()
+        index = _index_ref[0]
+        _index_ref[0] = (index + 1) % epoch_size
+        _lock.release()
         # processing using vs
-        src_arr_ref[0] = label
-        f_dst = dst.get_frame(frame_index_ref[0])
-        frame_index_ref[0] += 1
+        _src_ref[index] = label
+        f_dst = _dst.get_frame(index)
+        _src_ref[index] = None
         # vs.VideoFrame to np.ndarray
         data = []
         planes = f_dst.format.num_planes
@@ -304,9 +292,9 @@ def inputs(files, is_training=False, is_testing=False):
     dataset = tf.contrib.data.Dataset.from_tensor_slices(tf.constant(files))
     dataset = dataset.map(parse1_func, num_threads=threads,
                           output_buffer_size=threads * 64)
-    dataset = dataset.map(lambda label: tf.py_func(lambda label: parse2_pyfunc(label, parse2_dict),
+    dataset = dataset.map(lambda label: tf.py_func(parse2_pyfunc,
                               [label], [tf.float32, tf.float32]),
-                          num_threads=1, output_buffer_size=threads * 64)
+                          num_threads=threads_py, output_buffer_size=threads_py * 64)
     dataset = dataset.map(parse3_func, num_threads=threads,
                           output_buffer_size=threads * 64)
     if is_training: dataset = dataset.shuffle(buffer_size)

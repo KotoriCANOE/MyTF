@@ -36,6 +36,8 @@ tf.app.flags.DEFINE_integer('patch_width', 512,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Batch size.""")
+tf.app.flags.DEFINE_boolean('pre_down', True,
+                            """Pre-downscale large image for (probably) higher quality data.""")
 tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
@@ -129,6 +131,7 @@ def test():
         ret = ret_loss + ret_pngs
         sum_loss = [0 for _ in range(len(ret_loss))]
         for step in range(max_steps):
+            '''
             if step % 20 == 0:
                 cur_ret = sess.run(ret, options=run_options, run_metadata=run_metadata)
                 # Create the Timeline object, and write it to a json
@@ -138,6 +141,8 @@ def test():
                     f.write(ctf)
             else:
                 cur_ret = sess.run(ret)
+            '''
+            cur_ret = sess.run(ret)
             cur_loss = cur_ret[0:len(ret_loss)]
             cur_pngs = cur_ret[len(ret_loss):]
             # monitor losses
