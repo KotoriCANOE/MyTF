@@ -97,15 +97,19 @@ def conv2d_variable(name, shape, init_factor=None, wd=None):
         regularizer(var)
     return var
 
-def apply_activation(last, activation):
+def apply_activation(last, activation, data_format='NHWC'):
     if isinstance(activation, str):
         activation = activation.lower()
     if activation and activation != 'none':
         if activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':
-            prelu = tf.contrib.keras.layers.PReLU(shared_axes=[1, 2])
+            if data_format != 'NCHW':
+                last = tf.transpose(last, (0, 3, 1, 2))
+            prelu = tf.contrib.keras.layers.PReLU(shared_axes=[2, 3])
             last = prelu(last)
+            if data_format != 'NCHW':
+                last = tf.transpose(last, (0, 2, 3, 1))
         elif activation[0:5] == 'lrelu':
             alpha = activation[5:]
             if alpha: alpha = float(alpha)
@@ -141,7 +145,7 @@ def conv2d(last, ksize, out_channels,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last
 
 def depthwise_conv2d(last, ksize, channel_multiplier=1,
@@ -169,7 +173,7 @@ def depthwise_conv2d(last, ksize, channel_multiplier=1,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last
 
 def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
@@ -201,7 +205,7 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last
 
 # checkerboard artifacts free resize convolution
@@ -241,7 +245,7 @@ def resize_conv2d(last, ksize, out_channels,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last
 
 def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
@@ -280,7 +284,7 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last
 
 # implementation of Periodic Shuffling for sub-pixel convolution
@@ -351,7 +355,7 @@ def subpixel_conv2d(last, ksize, out_channels,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last
 
 def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
@@ -382,5 +386,5 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
         last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
                                             is_training=is_training, data_format=data_format)
     # activation function
-    last = apply_activation(last, activation)
+    last = apply_activation(last, activation, data_format)
     return last

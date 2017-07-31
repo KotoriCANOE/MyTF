@@ -1,4 +1,3 @@
-import sys
 import tensorflow as tf
 import numpy as np
 
@@ -115,11 +114,6 @@ def inputs(files, is_training=False, is_testing=False):
                                                   cropped_height, cropped_width)
         # convert dtype
         block = tf.image.convert_image_dtype(block, dtype, saturate=False)
-        # pre-downscale
-        def c_f1():
-            label_size = [patch_height, patch_width]
-            return tf.image.resize_images(block, label_size, tf.image.ResizeMethod.AREA)
-        block = tf.cond(tf.not_equal(dscale, 1), c_f1, lambda: block)
         # random color augmentation
         if is_training and FLAGS.color_augmentation > 0:
             block = tf.image.random_saturation(block, 1 - FLAGS.color_augmentation, 1 + FLAGS.color_augmentation)
@@ -137,12 +131,30 @@ def inputs(files, is_training=False, is_testing=False):
     import vapoursynth as vs
     from scipy import ndimage
     
+    def SigmoidInverse(clip, thr=0.5, cont=6.5, epsilon=1e-6):
+        assert clip.format.sample_type == vs.FLOAT
+        x0 = 1 / (1 + np.exp(cont * thr))
+        x1 = 1 / (1 + np.exp(cont * (thr - 1)))
+        # thr - log(max(1 / max(x * (x1 - x0) + x0, epsilon) - 1, epsilon)) / cont
+        expr = '{thr} 1 x {x1_x0} * {x0} + {epsilon} max / 1 - {epsilon} max log {cont_rec} * -'.format(thr=thr, cont_rec=1 / cont, epsilon=epsilon, x0=x0, x1_x0=x1 - x0)
+        return clip.std.Expr(expr)
+    
+    def SigmoidDirect(clip, thr=0.5, cont=6.5):
+        assert clip.format.sample_type == vs.FLOAT
+        x0 = 1 / (1 + np.exp(cont * thr))
+        x1 = 1 / (1 + np.exp(cont * (thr - 1)))
+        # (1 / (1 + exp(cont * (thr - x))) - x0) / (x1 - x0)
+        expr = '1 1 {cont} {thr} x - * exp + / {x0} - {x1_x0_rec} *'.format(thr=thr, cont=cont, x0=x0, x1_x0_rec=1 / (x1 - x0))
+        return clip.std.Expr(expr)
+    
     _lock = threading.Lock()
     _index_ref = [0]
     _src_ref = [None for _ in range(epoch_size)]
     core = vs.get_core(threads=threads_py)
-    _src_blk = core.std.BlankClip(None, patch_width, patch_height,
-                                 format=vs.RGBS, length=epoch_size)
+    _dscales = list(range(1, 5))
+    _src_blk = [core.std.BlankClip(None, patch_width * s, patch_height * s,
+                                   format=vs.RGBS, length=epoch_size)
+                for s in _dscales]
     _dst_blk = core.std.BlankClip(None, patch_width // scaling, patch_height // scaling,
                                  format=vs.RGBS, length=epoch_size)
     
@@ -154,14 +166,44 @@ def inputs(files, is_training=False, is_testing=False):
             f_arr = np.array(f_out.get_write_array(p), copy=False)
             np.copyto(f_arr, _src_ref[n][p, :, :] if data_format == 'NCHW' else _src_ref[n][:, :, p])
         return f_out
-    _src = _src_blk.std.ModifyFrame(_src_blk, src_func)
+    if FLAGS.pre_down:
+        _srcs = [s.std.ModifyFrame(s, src_func) for s in _src_blk]
+    else:
+        _src = _src_blk[0].std.ModifyFrame(_src_blk[0], src_func)
     
-    def eval_func(n):
-        clip = _src
-        rand_val = np.random.uniform(-1, 1)
-        abs_rand = np.abs(rand_val)
+    def src_select_func(n):
+        # select source
+        shape = _src_ref[n].shape
+        sh = shape[-2 if data_format == 'NCHW' else -3]
+        dw = patch_width
+        dh = patch_height
+        dscale = sh // dh
+        clip = _srcs[dscale - 1]
+        # downscale if needed
+        if dscale > 1:
+            clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
+            clip = SigmoidInverse(clip)
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=0, filter_param_b=0.5)
+            clip = SigmoidDirect(clip)
+            clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        return clip
+    if FLAGS.pre_down:
+        _src = _src_blk[0].std.FrameEval(src_select_func)
+    
+    def resize_func(n):
+        # select source
+        if FLAGS.pre_down:
+            shape = _src_ref[n].shape
+            sh = shape[-2 if data_format == 'NCHW' else -3]
+            dscale = sh // patch_height
+            clip = _srcs[dscale - 1]
+        else:
+            clip = _src
+        # parameters
         dw = patch_width // scaling
         dh = patch_height // scaling
+        rand_val = np.random.uniform(-1, 1)
+        abs_rand = np.abs(rand_val)
         # random gamma-to-linear
         if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
         # random resizers
@@ -178,7 +220,7 @@ def inputs(files, is_training=False, is_testing=False):
             b = np.random.normal(0, 1/6)
             c = (1 - b) * 0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        elif abs_rand < 0.65: # standard Bicubic
+        elif abs_rand < 0.65: # Mitchell-Netravali (standard Bicubic)
             b = np.random.normal(1/3, 1/6)
             c = (1 - b) * 0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
@@ -198,10 +240,11 @@ def inputs(files, is_training=False, is_testing=False):
         if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         # return
         return clip
-    _dst = _dst_blk.std.FrameEval(eval_func)
+    _dst = _dst_blk.std.FrameEval(resize_func)
     
     def parse2_pyfunc(label):
-        channel_index = 0 if data_format == 'NCHW' else -1
+        channel_index = -3 if data_format == 'NCHW' else -1
+        dscale = label.shape[-2 if data_format == 'NCHW' else -3] // patch_height
         # safely acquire and increase shared index
         _lock.acquire()
         index = _index_ref[0]
@@ -209,9 +252,17 @@ def inputs(files, is_training=False, is_testing=False):
         _lock.release()
         # processing using vs
         _src_ref[index] = label
+        if FLAGS.pre_down and dscale > 1: f_src = _src.get_frame(index)
         f_dst = _dst.get_frame(index)
         _src_ref[index] = None
         # vs.VideoFrame to np.ndarray
+        if FLAGS.pre_down and dscale > 1:
+            label = []
+            planes = f_src.format.num_planes
+            for p in range(planes):
+                f_arr = np.array(f_src.get_read_array(p), copy=False)
+                label.append(f_arr)
+            label = np.stack(label, axis=channel_index)
         data = []
         planes = f_dst.format.num_planes
         for p in range(planes):
@@ -274,17 +325,49 @@ def inputs(files, is_training=False, is_testing=False):
         # final process
         data = tf.clip_by_value(data, 0.0, 1.0)
         label = tf.clip_by_value(label, 0.0, 1.0)
-        # data format conversion
-        if data_format == 'NCHW':
-            data.set_shape([channels, None, None])
-            label.set_shape([channels, None, None])
-            #data.set_shape([channels, patch_height // scaling, patch_width // scaling])
-            #label.set_shape([channels, patch_height, patch_width])
-        else:
-            data.set_shape([None, None, channels])
-            label.set_shape([None, None, channels])
-            #data.set_shape([patch_height // scaling, patch_width // scaling, channels])
-            #label.set_shape([patch_height, patch_width, channels])
+        # JPEG encoding
+        if FLAGS.jpeg_coding:
+            rand_val = tf.random_uniform([], 0, 1)
+            def c_f1(data):
+                if data_format == 'NCHW':
+                    data = tf.transpose(data, (1, 2, 0))
+                data = tf.image.convert_image_dtype(data, tf.uint8, saturate=True)
+                def _f1():
+                    return tf.image.encode_jpeg(data, quality=98, chroma_downsampling=False)
+                def _f2():
+                    return tf.image.encode_jpeg(data, quality=96, chroma_downsampling=False)
+                def _f3():
+                    return tf.image.encode_jpeg(data, quality=95, chroma_downsampling=False)
+                def _f4():
+                    return tf.image.encode_jpeg(data, quality=92, chroma_downsampling=False)
+                def _f5():
+                    return tf.image.encode_jpeg(data, quality=90, chroma_downsampling=False)
+                def _f6():
+                    return tf.image.encode_jpeg(data, quality=88, chroma_downsampling=False)
+                def _f7():
+                    return tf.image.encode_jpeg(data, quality=85, chroma_downsampling=False)
+                def _f8():
+                    return tf.image.encode_jpeg(data, quality=84, chroma_downsampling=False)
+                def _f9():
+                    return tf.image.encode_jpeg(data, quality=82, chroma_downsampling=False)
+                def _f10():
+                    return tf.image.encode_jpeg(data, quality=80, chroma_downsampling=False)
+                data = tf.cond(tf.less(rand_val, 0.03), _f1,
+                    lambda: tf.cond(tf.less(rand_val, 0.06), _f2,
+                    lambda: tf.cond(tf.less(rand_val, 0.09), _f3,
+                    lambda: tf.cond(tf.less(rand_val, 0.12), _f4,
+                    lambda: tf.cond(tf.less(rand_val, 0.15), _f5,
+                    lambda: tf.cond(tf.less(rand_val, 0.18), _f6,
+                    lambda: tf.cond(tf.less(rand_val, 0.21), _f7,
+                    lambda: tf.cond(tf.less(rand_val, 0.24), _f8,
+                    lambda: tf.cond(tf.less(rand_val, 0.27), _f9, _f10)
+                    ))))))))
+                data = tf.image.decode_jpeg(data)
+                data = tf.image.convert_image_dtype(data, tf.float32, saturate=False)
+                if data_format == 'NCHW':
+                    data = tf.transpose(data, (2, 0, 1))
+                return data
+            data = tf.cond(tf.less(rand_val, 0.3), lambda: c_f1(data), lambda: data)
         # return
         return data, label
     
@@ -304,5 +387,17 @@ def inputs(files, is_training=False, is_testing=False):
     # return iterator
     iterator = dataset.make_one_shot_iterator()
     next_data, next_label = iterator.get_next()
+    
+    # data shape declaration
+    if data_format == 'NCHW':
+        next_data.set_shape([None, channels, None, None])
+        next_label.set_shape([None, channels, None, None])
+        #next_data.set_shape([None, channels, patch_height // scaling, patch_width // scaling])
+        #next_label.set_shape([None, channels, patch_height, patch_width])
+    else:
+        next_data.set_shape([None, None, None, channels])
+        next_label.set_shape([None, None, None, channels])
+        #next_data.set_shape([None, patch_height // scaling, patch_width // scaling, channels])
+        #next_label.set_shape([None, patch_height, patch_width, channels])
     
     return next_data, next_label

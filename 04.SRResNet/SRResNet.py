@@ -52,7 +52,7 @@ tf.app.flags.DEFINE_integer('channels2', 32,
                             """Number of features after resize conv.""")
 tf.app.flags.DEFINE_float('batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
-tf.app.flags.DEFINE_string('activation', 'relu',
+tf.app.flags.DEFINE_string('activation', 'prelu',
                             """Activation function used.""")
 tf.app.flags.DEFINE_integer('initializer', 5,
                             """Weights initialization method.""")
@@ -101,7 +101,8 @@ def inference(images_lr, is_training=False):
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
             skip2 = last
-            last = layers.apply_activation(last, activation=FLAGS.activation)
+            last = layers.apply_activation(last, activation=FLAGS.activation,
+                                           data_format=FLAGS.data_format)
     # skip connection
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -111,7 +112,8 @@ def inference(images_lr, is_training=False):
                              init_factor=FLAGS.init_factor, wd=weight_decay)
     with tf.variable_scope('skip_connection{}'.format(l)) as scope:
         last = tf.add(last, skip1, 'elementwise_sum')
-        last = layers.apply_activation(last, activation=FLAGS.activation)
+        last = layers.apply_activation(last, activation=FLAGS.activation,
+                                       data_format=FLAGS.data_format)
     # resize conv layer
     l += 1
     with tf.variable_scope('resize_conv{}'.format(l)) as scope:
