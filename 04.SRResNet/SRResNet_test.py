@@ -26,6 +26,8 @@ tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
 tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
+tf.app.flags.DEFINE_integer('threads_py', 4,
+                            """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
@@ -42,7 +44,7 @@ tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
-tf.app.flags.DEFINE_boolean('jpeg_coding', False,
+tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
 
 # constants
@@ -56,9 +58,10 @@ def setup():
     sess = tf.Session(config=config)
 
     # initialize rng with a deterministic seed
+    import random
     with sess.graph.as_default():
         tf.set_random_seed(FLAGS.random_seed)
-    #random.seed(FLAGS.random_seed)
+    random.seed(FLAGS.random_seed)
     np.random.seed(FLAGS.random_seed)
 
     summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)

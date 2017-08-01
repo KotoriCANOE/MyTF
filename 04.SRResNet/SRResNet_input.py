@@ -8,7 +8,7 @@ def inputs(files, is_training=False, is_testing=False):
     # parameters
     channels = FLAGS.image_channels
     threads = FLAGS.threads
-    threads_py = FLAGS.threads if not is_testing else 1
+    threads_py = FLAGS.threads_py
     scaling = FLAGS.scaling
     if is_training: num_epochs = FLAGS.num_epochs
     data_format = FLAGS.data_format
@@ -150,15 +150,15 @@ def inputs(files, is_training=False, is_testing=False):
     _lock = threading.Lock()
     _index_ref = [0]
     _src_ref = [None for _ in range(epoch_size)]
-    core = vs.get_core(threads=threads_py)
-    _dscales = list(range(1, 5))
+    core = vs.get_core(threads=1 if is_testing else threads_py)
+    _dscales = list(range(1, 5)) if FLAGS.pre_down else [1]
     _src_blk = [core.std.BlankClip(None, patch_width * s, patch_height * s,
                                    format=vs.RGBS, length=epoch_size)
                 for s in _dscales]
     _dst_blk = core.std.BlankClip(None, patch_width // scaling, patch_height // scaling,
                                  format=vs.RGBS, length=epoch_size)
     
-    def src_func(n, f):
+    def src_frame_func(n, f):
         f_out = f.copy()
         planes = f_out.format.num_planes
         # output
@@ -166,61 +166,88 @@ def inputs(files, is_training=False, is_testing=False):
             f_arr = np.array(f_out.get_write_array(p), copy=False)
             np.copyto(f_arr, _src_ref[n][p, :, :] if data_format == 'NCHW' else _src_ref[n][:, :, p])
         return f_out
-    if FLAGS.pre_down:
-        _srcs = [s.std.ModifyFrame(s, src_func) for s in _src_blk]
-    else:
-        _src = _src_blk[0].std.ModifyFrame(_src_blk[0], src_func)
+    _srcs = [s.std.ModifyFrame(s, src_frame_func) for s in _src_blk]
+    _srcs_linear = [s.resize.Bicubic(transfer_s='linear', transfer_in_s='709') for s in _srcs]
     
-    def src_select_func(n):
+    def src_down_func(clip):
+        dw = patch_width
+        dh = patch_height
+        #clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
+        clip = SigmoidInverse(clip)
+        clip = clip.resize.Bicubic(dw, dh, filter_param_a=0, filter_param_b=0.5)
+        clip = SigmoidDirect(clip)
+        clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        return clip
+    if FLAGS.pre_down:
+        _srcs_down = [src_down_func(s) for s in _srcs_linear]
+    
+    def src_select_eval(n):
         # select source
         shape = _src_ref[n].shape
         sh = shape[-2 if data_format == 'NCHW' else -3]
-        dw = patch_width
-        dh = patch_height
-        dscale = sh // dh
-        clip = _srcs[dscale - 1]
+        dscale = sh // patch_height
         # downscale if needed
         if dscale > 1:
-            clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
-            clip = SigmoidInverse(clip)
-            clip = clip.resize.Bicubic(dw, dh, filter_param_a=0, filter_param_b=0.5)
-            clip = SigmoidDirect(clip)
-            clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+            clip = _srcs_down[dscale - 1]
+        else:
+            clip = _srcs[dscale - 1]
         return clip
     if FLAGS.pre_down:
-        _src = _src_blk[0].std.FrameEval(src_select_func)
+        _src = _src_blk[0].std.FrameEval(src_select_eval)
+    else:
+        _src = _srcs[0]
     
-    def resize_func(n):
-        # select source
-        if FLAGS.pre_down:
-            shape = _src_ref[n].shape
-            sh = shape[-2 if data_format == 'NCHW' else -3]
-            dscale = sh // patch_height
-            clip = _srcs[dscale - 1]
-        else:
-            clip = _src
+    def resize_set_func(clip, linear=False):
+        # parameters
+        dw = patch_width // scaling
+        dh = patch_height // scaling
+        rets = {}
+        # resizers
+        rets['bilinear'] = clip.resize.Bilinear(dw, dh)
+        rets['spline16'] = clip.resize.Spline16(dw, dh)
+        rets['spline36'] = clip.resize.Spline36(dw, dh)
+        for taps in range(2, 12):
+            rets['lanczos{}'.format(taps)] = clip.resize.Lanczos(dw, dh, filter_param_a=taps)
+        # linear to gamma
+        if linear:
+            for key in rets:
+                rets[key] = rets[key].resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        return rets
+    _resizes = [resize_set_func(s, linear=False) for s in _srcs]
+    _linear_resizes = [resize_set_func(s, linear=True) for s in _srcs_linear]
+    
+    def resize_eval(n):
         # parameters
         dw = patch_width // scaling
         dh = patch_height // scaling
         rand_val = np.random.uniform(-1, 1)
         abs_rand = np.abs(rand_val)
+        # select source
+        shape = _src_ref[n].shape
+        sh = shape[-2 if data_format == 'NCHW' else -3]
+        dscale = sh // patch_height
         # random gamma-to-linear
-        if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
+        if rand_val < 0:
+            clip = _srcs_linear[dscale - 1]
+            resizes = _linear_resizes[dscale - 1]
+        else:
+            clip = _srcs[dscale - 1]
+            resizes = _resizes[dscale - 1]
         # random resizers
         if abs_rand < 0.05:
-            clip = clip.resize.Bilinear(dw, dh)
+            clip = resizes['bilinear']
         elif abs_rand < 0.1:
-            clip = clip.resize.Spline16(dw, dh)
+            clip = resizes['spline16']
         elif abs_rand < 0.15:
-            clip = clip.resize.Spline36(dw, dh)
-        elif abs_rand < 0.3: # Lanczos taps=[3, 24)
-            taps = int(np.clip(np.random.exponential(3), 0, 20)) + 3
-            clip = clip.resize.Lanczos(dw, dh, filter_param_a=taps)
-        elif abs_rand < 0.5: # Catmull-Rom
+            clip = resizes['spline36']
+        elif abs_rand < 0.4: # Lanczos taps=[2, 12)
+            taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
+            clip = resizes['lanczos{}'.format(taps)]
+        elif abs_rand < 0.6: # Catmull-Rom
             b = np.random.normal(0, 1/6)
             c = (1 - b) * 0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        elif abs_rand < 0.65: # Mitchell-Netravali (standard Bicubic)
+        elif abs_rand < 0.7: # Mitchell-Netravali (standard Bicubic)
             b = np.random.normal(1/3, 1/6)
             c = (1 - b) * 0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
@@ -237,10 +264,11 @@ def inputs(files, is_training=False, is_testing=False):
             c = np.random.normal(0.25, 0.25)
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
         # random linear-to-gamma
-        if rand_val < 0: clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        if rand_val < 0 and abs_rand >= 0.4:
+            clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         # return
         return clip
-    _dst = _dst_blk.std.FrameEval(resize_func)
+    _dst = _dst_blk.std.FrameEval(resize_eval)
     
     def parse2_pyfunc(label):
         channel_index = -3 if data_format == 'NCHW' else -1
@@ -327,47 +355,36 @@ def inputs(files, is_training=False, is_testing=False):
         label = tf.clip_by_value(label, 0.0, 1.0)
         # JPEG encoding
         if FLAGS.jpeg_coding:
-            rand_val = tf.random_uniform([], 0, 1)
+            rand_val = tf.random_uniform([], 0, 1, seed=FLAGS.random_seed if is_testing else None)
             def c_f1(data):
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (1, 2, 0))
                 data = tf.image.convert_image_dtype(data, tf.uint8, saturate=True)
-                def _f1():
-                    return tf.image.encode_jpeg(data, quality=98, chroma_downsampling=False)
-                def _f2():
-                    return tf.image.encode_jpeg(data, quality=96, chroma_downsampling=False)
-                def _f3():
-                    return tf.image.encode_jpeg(data, quality=95, chroma_downsampling=False)
-                def _f4():
-                    return tf.image.encode_jpeg(data, quality=92, chroma_downsampling=False)
-                def _f5():
-                    return tf.image.encode_jpeg(data, quality=90, chroma_downsampling=False)
-                def _f6():
-                    return tf.image.encode_jpeg(data, quality=88, chroma_downsampling=False)
-                def _f7():
-                    return tf.image.encode_jpeg(data, quality=85, chroma_downsampling=False)
-                def _f8():
-                    return tf.image.encode_jpeg(data, quality=84, chroma_downsampling=False)
-                def _f9():
-                    return tf.image.encode_jpeg(data, quality=82, chroma_downsampling=False)
-                def _f10():
-                    return tf.image.encode_jpeg(data, quality=80, chroma_downsampling=False)
-                data = tf.cond(tf.less(rand_val, 0.03), _f1,
-                    lambda: tf.cond(tf.less(rand_val, 0.06), _f2,
-                    lambda: tf.cond(tf.less(rand_val, 0.09), _f3,
-                    lambda: tf.cond(tf.less(rand_val, 0.12), _f4,
-                    lambda: tf.cond(tf.less(rand_val, 0.15), _f5,
-                    lambda: tf.cond(tf.less(rand_val, 0.18), _f6,
-                    lambda: tf.cond(tf.less(rand_val, 0.21), _f7,
-                    lambda: tf.cond(tf.less(rand_val, 0.24), _f8,
-                    lambda: tf.cond(tf.less(rand_val, 0.27), _f9, _f10)
-                    ))))))))
+                def _f1(quality):
+                    return tf.image.encode_jpeg(data, quality=quality, chroma_downsampling=False)
+                data = tf.cond(tf.less(rand_val, 0.02), lambda: _f1(100),
+                    lambda: tf.cond(tf.less(rand_val, 0.04), lambda: _f1(99),
+                    lambda: tf.cond(tf.less(rand_val, 0.06), lambda: _f1(98),
+                    lambda: tf.cond(tf.less(rand_val, 0.08), lambda: _f1(97),
+                    lambda: tf.cond(tf.less(rand_val, 0.10), lambda: _f1(96),
+                    lambda: tf.cond(tf.less(rand_val, 0.12), lambda: _f1(95),
+                    lambda: tf.cond(tf.less(rand_val, 0.14), lambda: _f1(94),
+                    lambda: tf.cond(tf.less(rand_val, 0.16), lambda: _f1(93),
+                    lambda: tf.cond(tf.less(rand_val, 0.18), lambda: _f1(92),
+                    lambda: tf.cond(tf.less(rand_val, 0.20), lambda: _f1(91),
+                    lambda: tf.cond(tf.less(rand_val, 0.22), lambda: _f1(90),
+                    lambda: tf.cond(tf.less(rand_val, 0.24), lambda: _f1(89),
+                    lambda: tf.cond(tf.less(rand_val, 0.26), lambda: _f1(88),
+                    lambda: tf.cond(tf.less(rand_val, 0.28), lambda: _f1(87),
+                    lambda: tf.cond(tf.less(rand_val, 0.30), lambda: _f1(86),
+                                                             lambda: _f1(85)
+                    )))))))))))))))
                 data = tf.image.decode_jpeg(data)
                 data = tf.image.convert_image_dtype(data, tf.float32, saturate=False)
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (2, 0, 1))
                 return data
-            data = tf.cond(tf.less(rand_val, 0.3), lambda: c_f1(data), lambda: data)
+            data = tf.cond(tf.less(rand_val, 0.32), lambda: c_f1(data), lambda: data)
         # return
         return data, label
     
@@ -377,12 +394,12 @@ def inputs(files, is_training=False, is_testing=False):
                           output_buffer_size=threads * 64)
     dataset = dataset.map(lambda label: tf.py_func(parse2_pyfunc,
                               [label], [tf.float32, tf.float32]),
-                          num_threads=threads_py, output_buffer_size=threads_py * 64)
-    dataset = dataset.map(parse3_func, num_threads=threads,
+                          num_threads=1 if is_testing else threads_py, output_buffer_size=threads_py * 64)
+    dataset = dataset.map(parse3_func, num_threads=1 if is_testing else threads,
                           output_buffer_size=threads * 64)
-    if is_training: dataset = dataset.shuffle(buffer_size)
+    if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
     dataset = dataset.batch(batch_size)
-    if is_training: dataset = dataset.repeat(num_epochs)
+    if is_training and num_epochs > 0: dataset = dataset.repeat(num_epochs)
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()

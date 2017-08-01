@@ -26,6 +26,8 @@ tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
 tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
+tf.app.flags.DEFINE_integer('threads_py', 4,
+                            """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
@@ -42,7 +44,7 @@ tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
-tf.app.flags.DEFINE_boolean('pre_down', True,
+tf.app.flags.DEFINE_boolean('pre_down', False,
                             """Pre-downscale large image for (probably) higher quality data.""")
 tf.app.flags.DEFINE_float('color_augmentation', 0.05,
                             """Amount of random color augmentations.""")
@@ -50,7 +52,7 @@ tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
-tf.app.flags.DEFINE_boolean('jpeg_coding', False,
+tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
 tf.app.flags.DEFINE_float('mixed_alpha', 0.50,
                             """blend weight for mixed loss.""")
