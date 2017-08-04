@@ -15,29 +15,42 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', './train.tmp',
+tf.app.flags.DEFINE_string('postfix', '',
+                            """Postfix added to train_dir, test_dir, test files, etc.""")
+tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
+tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Train',
+                           """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
-tf.app.flags.DEFINE_integer('threads', 4,
+tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
+tf.app.flags.DEFINE_integer('epoch_size', 0,
+                            """Number of samples in an epoch.""")
 tf.app.flags.DEFINE_integer('num_epochs', 40,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_integer('log_frequency', 100,
+tf.app.flags.DEFINE_integer('log_frequency', 1000,
                             """Log frequency.""")
+tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW'
+                            """Data layout format.""")
 tf.app.flags.DEFINE_integer('seq_size', 2048,
                             """Size of the 1-D sequence.""")
+tf.app.flags.DEFINE_integer('num_labels', 16,
+                            """Number of labels.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
-tf.app.flags.DEFINE_float('noise_level', 0.01,
-                            """STD of additive normal dist. random noise.""")
-
-# constants
-TRAINSET_PATH = r'..\Dataset.MRS\Train'
+tf.app.flags.DEFINE_float('smoothing', 0.25,
+                            """Spatial smoothing for the sequence.""")
+tf.app.flags.DEFINE_float('noise_scale', 0.05,
+                            """STD of additive Gaussian random noise.""")
+tf.app.flags.DEFINE_float('noise_corr', 0.5,
+                            """Spatial correlation of the Gaussian random noise.""")
+tf.app.flags.DEFINE_float('noise_base', 0.1,
+                            """Base ratio of the multiplicative noise.""")
 
 # helper class
 class LoggerHook(tf.train.SessionRunHook):
@@ -85,11 +98,12 @@ def total_loss():
 
 # training
 def train():
-    labels_file = os.path.join(TRAINSET_PATH, 'labels.npy0')
-    files = helper.listdir_files(TRAINSET_PATH,
+    labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')
+    files = helper.listdir_files(FLAGS.dataset, recursive=False,
                                  filter_ext=['.npy'],
                                  encoding='utf-8')
-    steps_per_epoch = len(files) // FLAGS.batch_size
+    epoch_size = FLAGS.epoch_size if FLAGS.epoch_size > 0 else len(files)
+    steps_per_epoch = epoch_size // FLAGS.batch_size
     epoch_size = steps_per_epoch * FLAGS.batch_size
     max_steps = steps_per_epoch * FLAGS.num_epochs
     files = files[:epoch_size]
@@ -97,18 +111,20 @@ def train():
         epoch_size, steps_per_epoch, FLAGS.num_epochs, max_steps))
     
     with tf.Graph().as_default():
-        # Force input pipeline to CPU:0 to avoid operations sometimes ending up on
-        # GPU and resulting in a slow down.
+        # pre-processing for input
         with tf.device('/cpu:0'):
-            spectrum, labels_gt = inputs(files, labels_file, is_training=True)
+            spectrum, labels_gt = inputs(files, labels_file, epoch_size, is_training=True)
         
+        # model inference and losses
         labels_pd = model.inference(spectrum, is_training=True)
         main_loss = loss_mad(labels_gt, labels_pd)
         train_loss = total_loss()
         
+        # training step and op
         global_step = tf.contrib.framework.get_or_create_global_step()
         train_op = model.train(train_loss, global_step)
         
+        # monitored session
         config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
         config.gpu_options.allow_growth = True
         
@@ -118,10 +134,6 @@ def train():
                        tf.train.NanTensorHook(train_loss),
                        LoggerHook(main_loss, steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
-            # restore variables from checkpoint
-            if FLAGS.restore:
-                saver = tf.train.Saver()
-                saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
             # run session
             while not mon_sess.should_stop():
                 mon_sess.run(train_op)
