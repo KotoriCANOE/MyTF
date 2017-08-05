@@ -33,13 +33,13 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('log_frequency', 1000,
                             """Log frequency.""")
-tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW'
+tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
                             """Data layout format.""")
 tf.app.flags.DEFINE_integer('seq_size', 2048,
                             """Size of the 1-D sequence.""")
 tf.app.flags.DEFINE_integer('num_labels', 16,
                             """Number of labels.""")
-tf.app.flags.DEFINE_integer('batch_size', 16,
+tf.app.flags.DEFINE_integer('batch_size', 64,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
@@ -96,6 +96,69 @@ def loss_mad(labels_gt, labels_pd):
 def total_loss():
     return tf.losses.get_total_loss()
 
+# profiler
+def profiler(train_op=None):
+    # Print trainable variable parameter statistics to stdout.
+    ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
+    param_stats = tf.profiler.profile(tf.get_default_graph(),
+        options=ProfileOptionBuilder.trainable_variables_parameter())
+
+    # Use code view to associate statistics with Python codes.
+    opts = ProfileOptionBuilder(
+        ProfileOptionBuilder.trainable_variables_parameter()
+        ).with_node_names(show_name_regexes=['MRS.py']
+        ).build()
+    param_stats = tf.profiler.profile(
+        tf.get_default_graph(),
+        cmd='code',
+        options=opts)
+    
+    # param_stats can be tensorflow.tfprof.GraphNodeProto or
+    # tensorflow.tfprof.MultiGraphNodeProto, depending on the view.
+    # Let's print the root below.
+    print('Total parameters: {}'.format(param_stats.total_parameters))
+    
+    # Print to stdout an analysis of the number of floating point operations in the
+    # model broken down by individual operations.
+    tf.profiler.profile(
+        tf.get_default_graph(),
+        options=tf.profiler.ProfileOptionBuilder.float_operation())
+    
+    if train_op:
+        # Generate the RunMetadata that contains the memory and timing information.
+        #
+        # Note: When run on accelerator (e.g. GPU), an operation might perform some
+        #       cpu computation, enqueue the accelerator computation. The accelerator
+        #       computation is then run asynchronously. The profiler considers 3
+        #       times: 1) accelerator computation. 2) cpu computation (might wait on
+        #       accelerator). 3) the sum of 1 and 2.
+        #
+        run_metadata = tf.RunMetadata()
+        with tf.Session() as sess:
+          _ = sess.run(train_op,
+                       options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                       run_metadata=run_metadata)
+        
+        # Print to stdout an analysis of the memory usage and the timing information
+        # broken down by python codes.
+        ProfileOptionBuilder = tf.profiler.ProfileOptionBuilder
+        opts = ProfileOptionBuilder(ProfileOptionBuilder.time_and_memory()
+            ).with_node_names(show_name_regexes=['MRS.py']).build()
+
+        tf.profiler.profile(
+            tf.get_default_graph(),
+            run_meta=run_metadata,
+            cmd='code',
+            options=opts)
+
+        # Print to stdout an analysis of the memory usage and the timing information
+        # broken down by operation types.
+        tf.profiler.profile(
+            tf.get_default_graph(),
+            run_meta=run_metadata,
+            cmd='op',
+            options=tf.profiler.ProfileOptionBuilder.time_and_memory())
+
 # training
 def train():
     labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')
@@ -124,9 +187,13 @@ def train():
         global_step = tf.contrib.framework.get_or_create_global_step()
         train_op = model.train(train_loss, global_step)
         
+        # profiler
+        #profiler(train_op)
+        
         # monitored session
-        config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
-        config.gpu_options.allow_growth = True
+        gpu_options = tf.GPUOptions(allow_growth=True)
+        config = tf.ConfigProto(gpu_options=gpu_options,
+            log_device_placement=FLAGS.log_device_placement)
         
         with tf.train.MonitoredTrainingSession(
                 checkpoint_dir=FLAGS.train_dir,
@@ -140,6 +207,10 @@ def train():
 
 # main
 def main(argv=None):
+    # arXiv 1509.09308
+    # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
+    os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
+    
     if not FLAGS.restore:
         if tf.gfile.Exists(FLAGS.train_dir):
             tf.gfile.DeleteRecursively(FLAGS.train_dir)

@@ -13,13 +13,13 @@ tf.app.flags.DEFINE_boolean('multiGPU', False,
                             """Train the model using multiple GPUs.""")
 tf.app.flags.DEFINE_float('weight_decay', 1e-5,
                             """L2 regularization weight decay factor""")
-tf.app.flags.DEFINE_float('learning_rate', 1e-3,
+tf.app.flags.DEFINE_float('learning_rate', 1e-4,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('lr_min', 0.0,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 1e3,
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.95,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.98,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
@@ -37,9 +37,9 @@ tf.app.flags.DEFINE_float('train_moving_average', 0.9999,
 # advanced model parameters
 tf.app.flags.DEFINE_integer('k_first', 7,
                             """Kernel size for the first layer.""")
-tf.app.flags.DEFINE_integer('res_blocks', 5,
+tf.app.flags.DEFINE_integer('res_blocks', 8,
                             """Number of residual blocks.""")
-tf.app.flags.DEFINE_integer('channels', 16,
+tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
 tf.app.flags.DEFINE_float('batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
@@ -69,33 +69,43 @@ def inference(spectrum, is_training):
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
         last = layers.conv2d(last, ksize=[1, FLAGS.k_first], out_channels=channels,
-                             stride=[1, 1, 2, 1], padding='SAME', data_format=FLAGS.data_format,
+                             stride=strides, padding='SAME', data_format=FLAGS.data_format,
                              batch_norm=None, is_training=is_training, activation=FLAGS.activation,
                              init_factor=FLAGS.init_activation, wd=weight_decay)
-        last = tf.nn.max_pool(last, ksize=pool_ksize, strides=strides, padding='SAME')
+        last = tf.nn.max_pool(last, ksize=pool_ksize, strides=strides,
+                              padding='SAME', data_format=FLAGS.data_format)
     # residual blocks
     rb = 0
     skip2 = last
     while rb < FLAGS.res_blocks:
         rb += 1
+        double_channel = rb % 2 == 1
+        if double_channel: channels *= 2
         l += 1
-        channels *= 2
         with tf.variable_scope('conv{}'.format(l)) as scope:
-            last = layers.conv2d(last, ksize=[1, 3], out_channels=channels,
+            last = layers.conv2d(last, ksize=[1, 1], out_channels=channels // 2,
+                                 stride=1, padding='SAME', data_format=FLAGS.data_format,
+                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
+                                 init_factor=FLAGS.init_activation, wd=weight_decay)
+        l += 1
+        with tf.variable_scope('conv{}'.format(l)) as scope:
+            last = layers.conv2d(last, ksize=[1, 3], out_channels=channels // 2,
                                  stride=strides, padding='SAME', data_format=FLAGS.data_format,
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
                                  init_factor=FLAGS.init_activation, wd=weight_decay)
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
-            last = layers.conv2d(last, ksize=[1, 3], out_channels=channels,
+            last = layers.conv2d(last, ksize=[1, 1], out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
                                  init_factor=FLAGS.init_factor, wd=weight_decay)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-            skip2 = tf.nn.avg_pool(skip2, ksize=strides, strides=strides, padding='SAME')
-            padding = [[0, 0] for _ in range(4)]
-            padding[channel_index] = [0, channels // 2]
-            skip2 = tf.pad(skip2, padding, mode='CONSTANT')
+            skip2 = tf.nn.avg_pool(skip2, ksize=strides, strides=strides,
+                                   padding='SAME', data_format=FLAGS.data_format)
+            if double_channel:
+                padding = [[0, 0] for _ in range(4)]
+                padding[channel_index] = [0, channels // 2]
+                skip2 = tf.pad(skip2, padding, mode='CONSTANT')
             last = tf.add(last, skip2, 'elementwise_sum')
             skip2 = last
             last = layers.apply_activation(last, activation=FLAGS.activation,

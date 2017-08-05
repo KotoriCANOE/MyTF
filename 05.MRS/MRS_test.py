@@ -28,7 +28,7 @@ tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW'
+tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
                             """Data layout format.""")
 tf.app.flags.DEFINE_integer('seq_size', 2048,
                             """Size of the 1-D sequence.""")
@@ -52,8 +52,9 @@ tf.app.flags.DEFINE_float('mad_thresh', 0.02,
 # setup tensorflow
 def setup():
     # create session
-    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
-    config.gpu_options.allow_growth = True
+    gpu_options = tf.GPUOptions(allow_growth=True)
+    config = tf.ConfigProto(gpu_options=gpu_options,
+        log_device_placement=FLAGS.log_device_placement)
     sess = tf.Session(config=config)
 
     # initialize rng with a deterministic seed
@@ -185,9 +186,15 @@ def test():
         file.write('Labels (Ground Truth)\nLabels (Predicted)\n\n')
         for _ in range(epoch_size):
             file.write('{}\n{}\n\n'.format(labels_gt[_], labels_pd[_]))
+    
+    print('')
 
 # main
 def main(argv=None):
+    # arXiv 1509.09308
+    # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
+    os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
+    
     if not tf.gfile.IsDirectory(FLAGS.train_dir):
         raise FileNotFoundError('Could not find folder {}'.format(FLAGS.train_dir))
     if tf.gfile.Exists(FLAGS.test_dir):
