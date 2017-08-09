@@ -19,7 +19,7 @@ tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
-tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Train',
+tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Train1',
                            """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
@@ -27,7 +27,7 @@ tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('epoch_size', 0,
                             """Number of samples in an epoch.""")
-tf.app.flags.DEFINE_integer('num_epochs', 40,
+tf.app.flags.DEFINE_integer('num_epochs', 80,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -39,7 +39,7 @@ tf.app.flags.DEFINE_integer('seq_size', 2048,
                             """Size of the 1-D sequence.""")
 tf.app.flags.DEFINE_integer('num_labels', 16,
                             """Number of labels.""")
-tf.app.flags.DEFINE_integer('batch_size', 64,
+tf.app.flags.DEFINE_integer('batch_size', 32,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")

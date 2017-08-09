@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
 tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
-tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Test',
+tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Test2',
                            """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
@@ -44,9 +44,9 @@ tf.app.flags.DEFINE_float('noise_corr', 0.5,
                             """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_base', 0.1,
                             """Base ratio of the multiplicative noise.""")
-tf.app.flags.DEFINE_float('mse_thresh', 0.001,
+tf.app.flags.DEFINE_float('mse_thresh', 0.005,
                             """MSE lower than this value will be considered as correct prediction.""")
-tf.app.flags.DEFINE_float('mad_thresh', 0.02,
+tf.app.flags.DEFINE_float('mad_thresh', 0.05,
                             """MAD lower than this value will be considered as correct prediction.""")
 
 # setup tensorflow
@@ -109,6 +109,9 @@ def test():
                        'scyllo-inositol', 'succinate', 'taurine', 'valine']
     else:
         LABEL_NAMES = list(range(FLAGS.num_labels))
+    
+    print(*LABEL_NAMES)
+    print('No.{}'.format(FLAGS.postfix))
 
     # get dataset files
     labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')

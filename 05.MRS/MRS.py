@@ -39,13 +39,13 @@ tf.app.flags.DEFINE_integer('k_first', 7,
                             """Kernel size for the first layer.""")
 tf.app.flags.DEFINE_integer('res_blocks', 8,
                             """Number of residual blocks.""")
-tf.app.flags.DEFINE_integer('channels', 64,
+tf.app.flags.DEFINE_integer('channels', 48,
                             """Number of features in hidden layers.""")
 tf.app.flags.DEFINE_float('batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('activation', 'relu',
                             """Activation function used.""")
-tf.app.flags.DEFINE_integer('initializer', 5,
+tf.app.flags.DEFINE_integer('initializer', 2,
                             """Weights initialization method.""")
 tf.app.flags.DEFINE_float('init_factor', 1.0,
                             """Weights initialization STD factor for conv layers without activation.""")
@@ -59,7 +59,7 @@ def inference(spectrum, is_training):
     weight_decay = FLAGS.weight_decay if is_training else None
     channel_index = -3 if FLAGS.data_format == 'NCHW' else -1
     pool_ksize = [1, 1, 1, 3] if FLAGS.data_format == 'NCHW' else [1, 1, 3, 1]
-    strides = [1, 1, 1, 2] if FLAGS.data_format == 'NCHW' else [1, 1, 2, 1]
+    reduce_strides = [1, 1, 1, 2] if FLAGS.data_format == 'NCHW' else [1, 1, 2, 1]
     # channels
     channels = FLAGS.channels
     # initialization
@@ -69,17 +69,17 @@ def inference(spectrum, is_training):
     l += 1
     with tf.variable_scope('conv{}'.format(l)) as scope:
         last = layers.conv2d(last, ksize=[1, FLAGS.k_first], out_channels=channels,
-                             stride=strides, padding='SAME', data_format=FLAGS.data_format,
+                             stride=[1, 1, 1, 1], padding='SAME', data_format=FLAGS.data_format,
                              batch_norm=None, is_training=is_training, activation=FLAGS.activation,
                              init_factor=FLAGS.init_activation, wd=weight_decay)
-        last = tf.nn.max_pool(last, ksize=pool_ksize, strides=strides,
-                              padding='SAME', data_format=FLAGS.data_format)
     # residual blocks
     rb = 0
     skip2 = last
     while rb < FLAGS.res_blocks:
         rb += 1
-        double_channel = rb % 2 == 1
+        reduce_size = rb % 1 == 0
+        strides = reduce_strides if reduce_size else [1, 1, 1, 1]
+        double_channel = rb % 3 == 1
         if double_channel: channels *= 2
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -100,8 +100,9 @@ def inference(spectrum, is_training):
                                  batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
                                  init_factor=FLAGS.init_factor, wd=weight_decay)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-            skip2 = tf.nn.avg_pool(skip2, ksize=strides, strides=strides,
-                                   padding='SAME', data_format=FLAGS.data_format)
+            if reduce_size:
+                skip2 = tf.nn.avg_pool(skip2, ksize=reduce_strides, strides=reduce_strides,
+                                       padding='SAME', data_format=FLAGS.data_format)
             if double_channel:
                 padding = [[0, 0] for _ in range(4)]
                 padding[channel_index] = [0, channels // 2]
