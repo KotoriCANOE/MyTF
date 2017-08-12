@@ -7,8 +7,8 @@ sys.path.append('..')
 from utils import helper
 import utils.image
 
-from SRResNet_input import inputs
-import SRResNet as model
+from input import inputs
+import model
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -165,7 +165,7 @@ def test():
             ofiles.extend([os.path.join(FLAGS.test_dir,
                 '{:0>5}.1.HR.png'.format(_)) for _ in _range])
             ofiles.extend([os.path.join(FLAGS.test_dir,
-                '{:0>5}.2.SRResNet{}.png'.format(_, FLAGS.postfix)) for _ in _range])
+                '{:0>5}.2.SR{}.png'.format(_, FLAGS.postfix)) for _ in _range])
             ofiles.extend([os.path.join(FLAGS.test_dir,
                 '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
             helper.WriteFiles(cur_pngs, ofiles)

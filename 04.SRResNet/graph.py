@@ -2,7 +2,7 @@ import os
 import numpy as np
 import tensorflow as tf
 
-import SRResNet as model
+import model
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))

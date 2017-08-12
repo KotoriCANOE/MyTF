@@ -9,8 +9,8 @@ sys.path.append('..')
 from utils import helper
 import utils.image
 
-from SRResNet_input import inputs
-import SRResNet as model
+from input import inputs
+import model
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))

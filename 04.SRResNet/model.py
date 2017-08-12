@@ -44,7 +44,7 @@ tf.app.flags.DEFINE_integer('k_first', 3,
                             """Kernel size for the first layer.""")
 tf.app.flags.DEFINE_integer('k_last', 3,
                             """Kernel size for the last layer.""")
-tf.app.flags.DEFINE_integer('res_blocks', 6,
+tf.app.flags.DEFINE_integer('res_blocks', 8,
                             """Number of residual blocks.""")
 tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
