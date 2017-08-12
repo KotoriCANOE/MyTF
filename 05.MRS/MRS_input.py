@@ -33,7 +33,10 @@ def inputs(files, labels_file, epoch_size=None, is_training=False, is_testing=Fa
             #sigma = FLAGS.smoothing
             #sigma = np.random.exponential(FLAGS.smoothing)
             #sigma = np.random.normal(FLAGS.smoothing, FLAGS.smoothing / 2)
-            sigma = np.random.lognormal(FLAGS.smoothing, 1)
+            #sigma = np.random.lognormal(FLAGS.smoothing, 1)
+            sigma = float('inf')
+            while sigma > FLAGS.smoothing * 10:
+                sigma = np.random.lognormal(1, 1) * FLAGS.smoothing
             if sigma > 0:
                 data = ndimage.gaussian_filter1d(data, sigma, axis=data_axis, mode='constant')
         # noise spatial correlation
@@ -47,7 +50,9 @@ def inputs(files, labels_file, epoch_size=None, is_training=False, is_testing=Fa
         # add Gaussian noise of random scale and random spatial correlation
         if FLAGS.noise_scale > 0:
             rand_val = np.random.uniform(0, 1)
-            scale = np.random.exponential(FLAGS.noise_scale)
+            scale = float('inf')
+            while scale > FLAGS.noise_scale * 3:
+                scale = np.random.exponential(FLAGS.noise_scale)
             if rand_val >= 0.05 and scale > 0: # add noise
                 noise_shape = list(data.shape)
                 noise = np.random.normal(0.0, scale, noise_shape).astype(np.float32)

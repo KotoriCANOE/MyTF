@@ -37,15 +37,15 @@ tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
                             """Data layout format.""")
 tf.app.flags.DEFINE_integer('seq_size', 2048,
                             """Size of the 1-D sequence.""")
-tf.app.flags.DEFINE_integer('num_labels', 16,
+tf.app.flags.DEFINE_integer('num_labels', 12,
                             """Number of labels.""")
-tf.app.flags.DEFINE_integer('batch_size', 32,
+tf.app.flags.DEFINE_integer('batch_size', 64,
                             """Batch size.""")
 tf.app.flags.DEFINE_integer('buffer_size', 8192,
                             """Buffer size for random shuffle.""")
-tf.app.flags.DEFINE_float('smoothing', 0.25,
+tf.app.flags.DEFINE_float('smoothing', 0.5,
                             """Spatial smoothing for the sequence.""")
-tf.app.flags.DEFINE_float('noise_scale', 0.05,
+tf.app.flags.DEFINE_float('noise_scale', 0.03,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.5,
                             """Spatial correlation of the Gaussian random noise.""")

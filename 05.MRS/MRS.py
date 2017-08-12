@@ -45,7 +45,7 @@ tf.app.flags.DEFINE_float('batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('activation', 'relu',
                             """Activation function used.""")
-tf.app.flags.DEFINE_integer('initializer', 2,
+tf.app.flags.DEFINE_integer('initializer', 3,
                             """Weights initialization method.""")
 tf.app.flags.DEFINE_float('init_factor', 1.0,
                             """Weights initialization STD factor for conv layers without activation.""")
@@ -116,7 +116,7 @@ def inference(spectrum, is_training):
     print(last.get_shape())
     with tf.variable_scope('fc{}'.format(l)) as scope:
         last = tf.contrib.layers.flatten(last)
-        last = tf.contrib.layers.fully_connected(last, FLAGS.num_labels, activation_fn=tf.nn.relu)
+        last = tf.contrib.layers.fully_connected(last, FLAGS.num_labels, activation_fn=None)
     # return predicted labels
     print('Totally {} convolutional/fully-connected layers.'.format(l))
     return last
