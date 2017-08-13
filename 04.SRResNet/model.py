@@ -7,6 +7,12 @@ from utils import layers
 # basic parameters
 tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
                             """Data layout format.""")
+tf.app.flags.DEFINE_integer('input_range', 1,
+                            """Internal used data range for input. Won't affect I/O. """
+                            """1: [0, 1]; 2: [-1, 1]""")
+tf.app.flags.DEFINE_integer('output_range', 1,
+                            """Internal used data range for output. Won't affect I/O. """
+                            """1: [0, 1]; 2: [-1, 1]""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
 tf.app.flags.DEFINE_boolean('multiGPU', False,
@@ -64,23 +70,23 @@ tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
 
 # model
 class SRmodel(object):
-    def __init__(self, config, data_format='NCHW', multiGPU=False, use_fp16=False,
-                 scaling=2, image_channels=3, res_blocks=8, channels=64, channels2=32,
-                 k_first=3, k_last=3, activation='prelu', batch_norm=0):
+    def __init__(self, config, data_format='NCHW', input_range=1, output_range=1,
+                 multiGPU=False, use_fp16=False, scaling=2, image_channels=3):
         self.data_format = data_format
+        self.input_range = input_range
+        self.output_range = output_range
         self.multiGPU = multiGPU
         self.use_fp16 = use_fp16
-        
         self.scaling = scaling
         self.image_channels = image_channels
         
-        self.res_blocks = res_blocks
-        self.channels = channels
-        self.channels2 = channels2
-        self.k_first = k_first
-        self.k_last = k_last
-        self.activation = activation
-        self.batch_norm = batch_norm
+        self.res_blocks = config.res_blocks
+        self.channels = config.channels
+        self.channels2 = config.channels2
+        self.k_first = config.k_first
+        self.k_last = config.k_last
+        self.activation = config.activation
+        self.batch_norm = config.batch_norm
         
         self.initializer = config.initializer
         self.init_factor = config.init_factor
@@ -198,6 +204,10 @@ class SRmodel(object):
     def inference_losses(self, gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
         import utils.image
         collection = self.inference_loss_key
+        # data range conversion
+        if self.output_range == 2:
+            gtruth = (gtruth + 1) * 0.5
+            pred = (pred + 1) * 0.5
         # L2 regularization weight decay
         if self.weight_decay > 0:
             l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
@@ -223,15 +233,23 @@ class SRmodel(object):
             self.images_lr = tf.placeholder(self.dtype, self.shape_lr, name='Input')
         else:
             self.images_lr = tf.identity(images_lr, name='Input')
+        if self.input_range == 2:
+            self.images_lr = self.images_lr * 2 - 1
         
         self.images_sr = self.inference(self.images_lr, is_training=is_training)
-        self.images_sr = tf.identity(self.images_sr, name='Output')
+        
+        if self.output_range == 2:
+            tf.multiply(self.images_sr + 1, 0.5, name='Output')
+        else:
+            tf.identity(self.images_sr, name='Output')
     
     def build_train(self, images_lr=None, images_hr=None):
         if images_hr is None:
             self.images_hr = tf.placeholder(self.dtype, self.shape_hr, name='Label')
         else:
             self.images_hr = tf.identity(images_hr, name='Label')
+        if self.output_range == 2:
+            self.images_hr = self.images_hr * 2 - 1
         
         self.build_model(images_lr, is_training=True)
         self.i_loss = self.inference_losses(self.images_hr, self.images_sr)

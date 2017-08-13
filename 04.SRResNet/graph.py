@@ -24,9 +24,10 @@ tf.app.flags.DEFINE_integer('threads', 8,
 def graph():
     with tf.Graph().as_default():
         # build model
-        model = SRmodel(FLAGS, data_format=FLAGS.data_format, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
-            scaling=FLAGS.scaling, image_channels=FLAGS.image_channels, res_blocks=FLAGS.res_blocks, channels=FLAGS.channels, channels2=FLAGS.channels2,
-            k_first=FLAGS.k_first, k_last=FLAGS.k_last, activation=FLAGS.activation, batch_norm=FLAGS.batch_norm)
+        model = SRmodel(FLAGS, data_format=FLAGS.data_format,
+            input_range=FLAGS.input_range, output_range=FLAGS.output_range,
+            multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
+            scaling=FLAGS.scaling, image_channels=FLAGS.image_channels)
         
         model.build_model()
         

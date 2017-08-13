@@ -101,12 +101,17 @@ def test():
             images_lr, images_hr = inputs(FLAGS, files, is_testing=True)
         
         # build model
-        model = SRmodel(FLAGS, data_format=FLAGS.data_format, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
-            scaling=FLAGS.scaling, image_channels=FLAGS.image_channels, res_blocks=FLAGS.res_blocks, channels=FLAGS.channels, channels2=FLAGS.channels2,
-            k_first=FLAGS.k_first, k_last=FLAGS.k_last, activation=FLAGS.activation, batch_norm=FLAGS.batch_norm)
+        model = SRmodel(FLAGS, data_format=FLAGS.data_format,
+            input_range=FLAGS.input_range, output_range=FLAGS.output_range,
+            multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
+            scaling=FLAGS.scaling, image_channels=FLAGS.image_channels)
         
         model.build_model(images_lr)
-        images_sr = model.images_sr
+        
+        # get output
+        images_sr = tf.get_default_graph().get_tensor_by_name('Output:0')
+        
+        # losses
         ret_loss = list(get_losses(images_hr, images_sr))
         
         # restore variables from checkpoint
