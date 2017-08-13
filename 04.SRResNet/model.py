@@ -4,9 +4,6 @@ sys.path.append('..')
 from utils import helper
 from utils import layers
 
-# flags
-FLAGS = tf.app.flags.FLAGS
-
 # basic parameters
 tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
                             """Data layout format.""")
@@ -67,7 +64,7 @@ tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
 
 # model
 class SRmodel(object):
-    def __init__(self, data_format='NCHW', multiGPU=False, use_fp16=False,
+    def __init__(self, config, data_format='NCHW', multiGPU=False, use_fp16=False,
                  scaling=2, image_channels=3, res_blocks=8, channels=64, channels2=32,
                  k_first=3, k_last=3, activation='prelu', batch_norm=0):
         self.data_format = data_format
@@ -85,20 +82,20 @@ class SRmodel(object):
         self.activation = activation
         self.batch_norm = batch_norm
         
-        self.initializer = FLAGS.initializer
-        self.init_factor = FLAGS.init_factor
-        self.init_activation = FLAGS.init_activation
-        self.weight_decay = FLAGS.weight_decay
-        self.learning_rate = FLAGS.learning_rate
-        self.lr_min = FLAGS.lr_min
-        self.lr_decay_steps = FLAGS.lr_decay_steps
-        self.lr_decay_factor = FLAGS.lr_decay_factor
-        self.learning_momentum = FLAGS.learning_momentum
-        self.learning_beta1 = FLAGS.learning_beta1
-        self.epsilon = FLAGS.epsilon
-        self.gradient_clipping = FLAGS.gradient_clipping
-        self.loss_moving_average = FLAGS.loss_moving_average
-        self.train_moving_average = FLAGS.train_moving_average
+        self.initializer = config.initializer
+        self.init_factor = config.init_factor
+        self.init_activation = config.init_activation
+        self.weight_decay = config.weight_decay
+        self.learning_rate = config.learning_rate
+        self.lr_min = config.lr_min
+        self.lr_decay_steps = config.lr_decay_steps
+        self.lr_decay_factor = config.lr_decay_factor
+        self.learning_momentum = config.learning_momentum
+        self.learning_beta1 = config.learning_beta1
+        self.epsilon = config.epsilon
+        self.gradient_clipping = config.gradient_clipping
+        self.loss_moving_average = config.loss_moving_average
+        self.train_moving_average = config.train_moving_average
         
         self.inference_weight_key = 'inference_weights'
         self.inference_loss_key = 'inference_losses'
@@ -212,10 +209,10 @@ class SRmodel(object):
         RGB_mad = tf.losses.absolute_difference(gtruth, pred,
             weights=weights1, loss_collection=collection)
         # MS-SSIM: OPP color space - Y
-        Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
-        Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
+        Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
+        Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
         Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
-                    norm=False, data_format=FLAGS.data_format)) * weights2
+                    norm=False, data_format=self.data_format)) * weights2
         tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
         # return total loss
         return tf.add_n(tf.losses.get_losses(loss_collection=collection),
