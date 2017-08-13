@@ -8,7 +8,7 @@ from utils import helper
 import utils.image
 
 from input import inputs
-import model
+from model import SRmodel
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -16,6 +16,7 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
+# parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
@@ -30,8 +31,6 @@ tf.app.flags.DEFINE_integer('threads_py', 4,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
-                            """Data layout format.""")
 tf.app.flags.DEFINE_integer('patch_height', 512,
                             """Block size y.""")
 tf.app.flags.DEFINE_integer('patch_width', 512,
@@ -53,8 +52,9 @@ TESTSET_PATH = r'..\Dataset.SR\Test'
 # setup tensorflow
 def setup():
     # create session
-    config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
-    config.gpu_options.allow_growth = True
+    gpu_options = tf.GPUOptions(allow_growth=True)
+    config = tf.ConfigProto(gpu_options=gpu_options,
+        log_device_placement=FLAGS.log_device_placement)
     sess = tf.Session(config=config)
 
     # initialize rng with a deterministic seed
@@ -100,8 +100,13 @@ def test():
         with tf.device('/cpu:0'):
             images_lr, images_hr = inputs(files, is_testing=True)
         
-        # model inference and losses
-        images_sr = model.inference(images_lr, is_training=False)
+        # build model
+        model = SRmodel(data_format=FLAGS.data_format, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
+            scaling=FLAGS.scaling, image_channels=FLAGS.image_channels, res_blocks=FLAGS.res_blocks, channels=FLAGS.channels, channels2=FLAGS.channels2,
+            k_first=FLAGS.k_first, k_last=FLAGS.k_last, activation=FLAGS.activation, batch_norm=FLAGS.batch_norm)
+        
+        model.build_model(images_lr)
+        images_sr = model.images_sr
         ret_loss = list(get_losses(images_hr, images_sr))
         
         # restore variables from checkpoint
@@ -132,6 +137,7 @@ def test():
         # options
         run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
         run_metadata = tf.RunMetadata()
+        
         # run session
         ret = ret_loss + ret_pngs
         sum_loss = [0 for _ in range(len(ret_loss))]
@@ -179,6 +185,10 @@ def test():
 
 # main
 def main(argv=None):
+    # arXiv 1509.09308
+    # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
+    os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
+    
     if not tf.gfile.IsDirectory(FLAGS.train_dir):
         raise FileNotFoundError('Could not find folder {}'.format(FLAGS.train_dir))
     if tf.gfile.Exists(FLAGS.test_dir):

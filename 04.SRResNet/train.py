@@ -7,10 +7,9 @@ import tensorflow as tf
 from tensorflow.python.client import timeline
 sys.path.append('..')
 from utils import helper
-import utils.image
 
 from input import inputs
-import model
+from model import SRmodel
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -18,12 +17,17 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
+# parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
+tf.app.flags.DEFINE_integer('save_steps', 0,
+                            """Number of steps to save meta.""")
+tf.app.flags.DEFINE_integer('timeline_steps', 0,
+                            """Number of steps to save timeline.""")
 tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 4,
@@ -34,8 +38,6 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('log_frequency', 100,
                             """Log frequency.""")
-tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
-                            """Data layout format.""")
 tf.app.flags.DEFINE_integer('patch_height', 96,
                             """Block size y.""")
 tf.app.flags.DEFINE_integer('patch_width', 96,
@@ -54,8 +56,6 @@ tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
-tf.app.flags.DEFINE_float('mixed_alpha', 0.50,
-                            """blend weight for mixed loss.""")
 
 # constants
 TRAINSET_PATH = r'..\Dataset.SR\Train'
@@ -92,43 +92,6 @@ class LoggerHook(tf.train.SessionRunHook):
             print(format_str.format(datetime.now(), self._epoch, self._step,
                                     loss, examples_per_sec, sec_per_batch))
 
-# losses
-def loss_mse(gtruth, pred, weights=1.0):
-    # RGB color space
-    mse = tf.losses.mean_squared_error(gtruth, pred, weights=weights)
-    return mse
-
-def loss_mad(gtruth, pred, weights=1.0):
-    # RGB color space
-    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights)
-    return RGB_mad
-
-def loss_mixed1(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
-    weights1 *= 1 - alpha
-    weights2 *= alpha
-    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights1)
-    # OPP color space - Y
-    Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
-    Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
-    Y_ss_ssim = (1 - utils.image.SS_SSIM(Y_gtruth, Y_pred, data_format=FLAGS.data_format)) * weights2
-    tf.losses.add_loss(Y_ss_ssim)
-    return RGB_mad + Y_ss_ssim
-
-def loss_mixed2(gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
-    weights1 *= 1 - alpha
-    weights2 *= alpha
-    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=weights1)
-    # OPP color space - Y
-    Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
-    Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
-    Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
-                norm=False, data_format=FLAGS.data_format)) * weights2
-    tf.losses.add_loss(Y_ms_ssim)
-    return RGB_mad + Y_ms_ssim
-
-def total_loss():
-    return tf.losses.get_total_loss()
-
 # training
 def train():
     files = helper.listdir_files(TRAINSET_PATH,
@@ -146,44 +109,62 @@ def train():
         with tf.device('/cpu:0'):
             images_lr, images_hr = inputs(files, is_training=True)
         
-        # model inference and losses
-        images_sr = model.inference(images_lr, is_training=True)
-        main_loss = loss_mixed2(images_hr, images_sr, alpha=FLAGS.mixed_alpha)
-        train_loss = total_loss()
+        # build model
+        model = SRmodel(data_format=FLAGS.data_format, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
+            scaling=FLAGS.scaling, image_channels=FLAGS.image_channels, res_blocks=FLAGS.res_blocks, channels=FLAGS.channels, channels2=FLAGS.channels2,
+            k_first=FLAGS.k_first, k_last=FLAGS.k_last, activation=FLAGS.activation, batch_norm=FLAGS.batch_norm)
+        
+        i_loss = model.build_train(images_lr, images_hr)
         
         # training step and op
         global_step = tf.contrib.framework.get_or_create_global_step()
-        train_op = model.train(train_loss, global_step)
+        train_op = model.train(global_step)
+        
+        # a saver object which will save all the variables
+        if FLAGS.save_steps > 0:
+            saver = tf.train.Saver()
         
         # monitored session
-        config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
-        config.gpu_options.allow_growth = True
+        gpu_options = tf.GPUOptions(allow_growth=True)
+        config = tf.ConfigProto(gpu_options=gpu_options,
+            log_device_placement=FLAGS.log_device_placement)
         
         with tf.train.MonitoredTrainingSession(
                 checkpoint_dir=FLAGS.train_dir,
                 hooks=[tf.train.StopAtStepHook(last_step=max_steps),
-                       tf.train.NanTensorHook(train_loss),
-                       LoggerHook(main_loss, steps_per_epoch)],
+                       tf.train.NanTensorHook(i_loss),
+                       LoggerHook(i_loss, steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
             # options
-            run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-            run_metadata = tf.RunMetadata()
-            step = 0
+            if FLAGS.timeline_steps > 0:
+                run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+                run_metadata = tf.RunMetadata()
             # run session
             while not mon_sess.should_stop():
-                if step % 5000 == 0:
-                    mon_sess.run(train_op, options=run_options, run_metadata=run_metadata)
+                mon_sess.run(train_op)
+                # not work on MonitoredSession
+                '''
+                step = tf.train.global_step(sess, global_step)
+                if FLAGS.timeline_steps > 0 and step % FLAGS.timeline_steps == 0:
+                    sess.run(train_op, options=run_options, run_metadata=run_metadata)
                     # Create the Timeline object, and write it to a json
                     tl = timeline.Timeline(run_metadata.step_stats)
                     ctf = tl.generate_chrome_trace_format()
                     with open(os.path.join(FLAGS.train_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
                         f.write(ctf)
                 else:
-                    mon_sess.run(train_op)
-                step += 1
+                    sess.run(train_op)
+                if FLAGS.save_steps > 0 and step % FLAGS.save_steps == 0:
+                    saver.save(sess, os.path.join(FLAGS.train_dir, 'model_{:0>7}'.format(step)),
+                               write_meta_graph=True, write_state=True)
+                '''
 
 # main
 def main(argv=None):
+    # arXiv 1509.09308
+    # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
+    os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
+    
     if not FLAGS.restore:
         if tf.gfile.Exists(FLAGS.train_dir):
             tf.gfile.DeleteRecursively(FLAGS.train_dir)
