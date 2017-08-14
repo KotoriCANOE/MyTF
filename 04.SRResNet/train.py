@@ -94,9 +94,11 @@ class LoggerHook(tf.train.SessionRunHook):
 
 # training
 def train():
+    import random
     files = helper.listdir_files(TRAINSET_PATH,
                                  filter_ext=['.jpeg', '.jpg', '.png'],
                                  encoding=True)
+    random.shuffle(files)
     steps_per_epoch = len(files) // FLAGS.batch_size
     epoch_size = steps_per_epoch * FLAGS.batch_size
     max_steps = steps_per_epoch * FLAGS.num_epochs
@@ -115,7 +117,7 @@ def train():
             multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
             scaling=FLAGS.scaling, image_channels=FLAGS.image_channels)
         
-        i_loss = model.build_train(images_lr, images_hr)
+        g_loss = model.build_train(images_lr, images_hr)
         
         # training step and op
         global_step = tf.contrib.framework.get_or_create_global_step()
@@ -133,8 +135,8 @@ def train():
         with tf.train.MonitoredTrainingSession(
                 checkpoint_dir=FLAGS.train_dir,
                 hooks=[tf.train.StopAtStepHook(last_step=max_steps),
-                       tf.train.NanTensorHook(i_loss),
-                       LoggerHook(i_loss, steps_per_epoch)],
+                       tf.train.NanTensorHook(g_loss),
+                       LoggerHook(g_loss, steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
             # options
             if FLAGS.timeline_steps > 0:

@@ -39,6 +39,10 @@ def eprint(*args, **kwargs):
 # API
 class SRFilter:
     def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2):
+        # arXiv 1509.09308
+        # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
+        os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
+        
         self.data_format = data_format
         self.scaling = scaling
         self._create_session()
@@ -61,7 +65,7 @@ class SRFilter:
         # access placeholders variables
         self.graph = tf.get_default_graph()
         self.input = self.graph.get_tensor_by_name('Input:0')
-        self.output = self.graph.get_tensor_by_name('conv16/BiasAdd:0')
+        self.output = self.graph.get_tensor_by_name('Output:0')
         '''
         # model
         import SRResNet as model
