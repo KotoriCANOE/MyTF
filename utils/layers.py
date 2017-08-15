@@ -222,12 +222,14 @@ def resize_conv2d(last, ksize, out_channels,
     in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
+    if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
+        scaling = [scaling, scaling]
     shape = tf.shape(last)
     if data_format == 'NCHW':
-        out_size = [shape[2] * scaling, shape[3] * scaling]
+        out_size = [shape[2] * scaling[0], shape[3] * scaling[1]]
         out_shape = [shape[0], out_channels, out_size[0], out_size[1]]
     else:
-        out_size = [shape[1] * scaling, shape[2] * scaling]
+        out_size = [shape[1] * scaling[0], shape[2] * scaling[1]]
         out_shape = [shape[0], out_size[0], out_size[1], out_channels]
     # nearest-neighbor upsample
     if data_format == 'NCHW':
@@ -236,6 +238,14 @@ def resize_conv2d(last, ksize, out_channels,
     if data_format == 'NCHW':
         last = utils.image.NHWC2NCHW(last)
     # deconvolution 2D
+    '''
+    kshape = [ksize[0], ksize[1], in_channels, out_channels]
+    kernel = conv2d_variable('weights', shape=kshape,
+                             initializer=initializer, init_factor=init_factor,
+                             trainable=is_training, wd=wd, collection=collection)
+    last = tf.nn.conv2d(last, kernel, strides=[1, 1, 1, 1],
+                        padding='SAME', data_format=data_format)
+    '''
     kshape = [ksize[0], ksize[1], out_channels, in_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              initializer=initializer, init_factor=init_factor,
@@ -243,7 +253,7 @@ def resize_conv2d(last, ksize, out_channels,
     last = tf.nn.conv2d_transpose(last, kernel, out_shape, strides=[1, 1, 1, 1],
                                   padding='SAME', data_format=data_format)
     biases = get_variable('biases', [out_channels],
-                              tf.constant_initializer(0.0), is_training)
+                          tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
     if batch_norm:
@@ -262,12 +272,14 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
     out_channels = in_channels // channel_multiplier
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
+    if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
+        scaling = [scaling, scaling]
     shape = tf.shape(last)
     if data_format == 'NCHW':
-        out_size = [shape[2] * scaling, shape[3] * scaling]
+        out_size = [shape[2] * scaling[0], shape[3] * scaling[1]]
         out_shape = [shape[0], out_channels, out_size[0], out_size[1]]
     else:
-        out_size = [shape[1] * scaling, shape[2] * scaling]
+        out_size = [shape[1] * scaling[0], shape[2] * scaling[1]]
         out_shape = [shape[0], out_size[0], out_size[1], out_channels]
     # nearest-neighbor upsample
     if data_format == 'NCHW':
@@ -280,10 +292,14 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
     depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
                                        initializer=initializer, init_factor=init_factor,
                                        trainable=is_training, wd=wd, collection=collection)
+    '''
+    last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=[1, 1, 1, 1],
+                                         padding='SAME', data_format=data_format)
+    '''
     last = tf.nn.depthwise_conv2d_native_backprop_input(out_shape, depthwise_kernel, last,
             strides=[1, 1, 1, 1], padding='SAME', data_format=data_format)
     biases = get_variable('biases', [out_channels],
-                              tf.constant_initializer(0.0), is_training)
+                          tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
     if batch_norm:

@@ -7,10 +7,10 @@ from utils import layers
 # basic parameters
 tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
                             """Data layout format.""")
-tf.app.flags.DEFINE_integer('input_range', 1,
+tf.app.flags.DEFINE_integer('input_range', 2,
                             """Internal used data range for input. Won't affect I/O. """
                             """1: [0, 1]; 2: [-1, 1]""")
-tf.app.flags.DEFINE_integer('output_range', 1,
+tf.app.flags.DEFINE_integer('output_range', 2,
                             """Internal used data range for output. Won't affect I/O. """
                             """1: [0, 1]; 2: [-1, 1]""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
@@ -22,7 +22,7 @@ tf.app.flags.DEFINE_integer('scaling', 2,
 tf.app.flags.DEFINE_integer('image_channels', 3,
                             """Channels of input/output image.""")
 
-# model parameters
+# model parameters - generator
 tf.app.flags.DEFINE_integer('k_first', 3,
                             """Kernel size for the first layer.""")
 tf.app.flags.DEFINE_integer('k_last', 3,
@@ -59,6 +59,8 @@ tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
 tf.app.flags.DEFINE_float('learning_beta1', 0.9,
                             """beta1 for AdamOptimizer""")
+tf.app.flags.DEFINE_float('learning_beta2', 0.999,
+                            """beta2 for AdamOptimizer""")
 tf.app.flags.DEFINE_float('epsilon', 1e-8,
                             """Fuzz term to avoid numerical instability""")
 tf.app.flags.DEFINE_float('gradient_clipping', 0, #0.002,
@@ -104,6 +106,7 @@ class SRmodel(object):
         self.lr_decay_factor = config.lr_decay_factor
         self.learning_momentum = config.learning_momentum
         self.learning_beta1 = config.learning_beta1
+        self.learning_beta2 = config.learning_beta2
         self.epsilon = config.epsilon
         self.gradient_clipping = config.gradient_clipping
         self.loss_moving_average = config.loss_moving_average
@@ -213,35 +216,38 @@ class SRmodel(object):
         print('Totally {} convolutional layers.'.format(l))
         return last
     
-    def generator_losses(self, gtruth, pred, alpha=0.50, weights1=1.0, weights2=1.0):
+    def generator_losses(self, gtruth, pred, alpha=0.25, weights1=1.0, weights2=1.0):
         import utils.image
         collection = self.generator_loss_key
-        # data range conversion
-        if self.output_range == 2:
-            gtruth = (gtruth + 1) * 0.5
-            pred = (pred + 1) * 0.5
-        # L2 regularization weight decay
-        if self.weight_decay > 0:
-            l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
-                tf.get_collection(self.generator_weight_key)])
-            l2_regularize = tf.multiply(l2_regularize, self.weight_decay,
-                name='l2_regularize_loss')
-            tf.losses.add_loss(l2_regularize, loss_collection=collection)
-        # L1 loss
-        weights1 *= 1 - alpha
-        weights2 *= alpha
-        RGB_mad = tf.losses.absolute_difference(gtruth, pred,
-            weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
-        # MS-SSIM: OPP color space - Y
-        Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
-        Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
-        Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
-                    norm=False, data_format=self.data_format))
-        Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
-        tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
-        # return total loss
-        return tf.add_n(tf.losses.get_losses(loss_collection=collection),
-                        name=self.generator_total_loss_key)
+        with tf.variable_scope('generator_losses') as scope:
+            # data range conversion
+            if self.output_range == 2:
+                gtruth = (gtruth + 1) * 0.5
+                pred = (pred + 1) * 0.5
+            # L2 regularization weight decay
+            if self.weight_decay > 0:
+                with tf.variable_scope('l2_regularize') as scope:
+                    l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
+                        tf.get_collection(self.generator_weight_key)])
+                    l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
+                    tf.losses.add_loss(l2_regularize, loss_collection=collection)
+            # L1 loss
+            weights1 *= 1 - alpha
+            weights2 *= alpha
+            if alpha != 1.0:
+                RGB_mad = tf.losses.absolute_difference(gtruth, pred,
+                    weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
+            # MS-SSIM: OPP color space - Y
+            if alpha != 0.0:
+                Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
+                Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
+                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
+                            norm=False, data_format=self.data_format))
+                Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
+                tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
+            # return total loss
+            return tf.add_n(tf.losses.get_losses(loss_collection=collection),
+                            name=self.generator_total_loss_key)
     
     def build_model(self, images_lr=None, is_training=False):
         # input samples
@@ -313,8 +319,10 @@ class SRmodel(object):
         # compute gradients
         with tf.control_dependencies(update_ops):
             #g_opt = tf.train.MomentumOptimizer(g_lr, momentum=self.learning_momentum, use_nesterov=True)
-            g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1, epsilon=self.epsilon)
-            #g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1, epsilon=self.epsilon)
+            g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
+                beta2=self.learning_beta2, epsilon=self.epsilon)
+            #g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
+            #    beta2=self.learning_beta2, epsilon=self.epsilon)
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, var_list=self.g_vars)
         
         # gradient clipping

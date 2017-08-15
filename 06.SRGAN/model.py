@@ -43,7 +43,7 @@ tf.app.flags.DEFINE_integer('d_blocks', 3,
                             """Number of blocks.""")
 tf.app.flags.DEFINE_integer('d_channels', 64,
                             """Number of features in hidden layers.""")
-tf.app.flags.DEFINE_float('d_batch_norm', 0.999,
+tf.app.flags.DEFINE_float('d_batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('d_activation', 'lrelu0.2',
                             """Activation function used.""")
@@ -57,7 +57,7 @@ tf.app.flags.DEFINE_float('init_activation', 1.0,
                             """Weights initialization STD factor for conv layers with activation.""")
 tf.app.flags.DEFINE_float('weight_decay', 1e-5,
                             """L2 regularization weight decay factor""")
-tf.app.flags.DEFINE_float('learning_rate', 1e-3,
+tf.app.flags.DEFINE_float('learning_rate', 1e-4,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('lr_min', 1e-8,
                             """Minimum learning rate""")
@@ -69,6 +69,8 @@ tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
 tf.app.flags.DEFINE_float('learning_beta1', 0.9,
                             """beta1 for AdamOptimizer""")
+tf.app.flags.DEFINE_float('learning_beta2', 0.999,
+                            """beta2 for AdamOptimizer""")
 tf.app.flags.DEFINE_float('epsilon', 1e-8,
                             """Fuzz term to avoid numerical instability""")
 tf.app.flags.DEFINE_float('gradient_clipping', 0, #0.002,
@@ -83,7 +85,7 @@ tf.app.flags.DEFINE_float('d_weight_decay', 1e-5,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('d_learning_rate', 1e-4,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('d_lr_min', 1e-9,
+tf.app.flags.DEFINE_float('d_lr_min', 1e-8,
                             """Minimum learning rate""")
 
 # model
@@ -127,6 +129,7 @@ class SRmodel(object):
         self.lr_decay_factor = config.lr_decay_factor
         self.learning_momentum = config.learning_momentum
         self.learning_beta1 = config.learning_beta1
+        self.learning_beta2 = config.learning_beta2
         self.epsilon = config.epsilon
         self.gradient_clipping = config.gradient_clipping
         self.loss_moving_average = config.loss_moving_average
@@ -308,63 +311,67 @@ class SRmodel(object):
         # return discriminating logits
         return last
     
-    def generator_losses(self, gtruth, pred, pred_logits, alpha=0.50, weights1=1.0, weights2=1.0):
+    def generator_losses(self, gtruth, pred, pred_logits, alpha=0.0, weights1=1.0, weights2=1.0):
         import utils.image
         collection = self.generator_loss_key
-        # adversarial loss
-        ad_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-            logits=pred_logits, labels=tf.ones_like(pred_logits)))
-        tf.summary.scalar('ad_loss', ad_loss)
-        ad_loss = tf.multiply(ad_loss, 1e-2, name='adversarial_loss')
-        tf.losses.add_loss(ad_loss, loss_collection=collection)
-        # data range conversion
-        if self.output_range == 2:
-            gtruth = (gtruth + 1) * 0.5
-            pred = (pred + 1) * 0.5
-        # L2 regularization weight decay
-        if self.weight_decay > 0:
-            l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
-                tf.get_collection(self.generator_weight_key)])
-            l2_regularize = tf.multiply(l2_regularize, self.weight_decay,
-                name='l2_regularize_loss')
-            tf.losses.add_loss(l2_regularize, loss_collection=collection)
-        # L1 loss
-        weights1 *= 1 - alpha
-        weights2 *= alpha
-        RGB_mad = tf.losses.absolute_difference(gtruth, pred,
-            weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
-        # MS-SSIM: OPP color space - Y
-        Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
-        Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
-        Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
-                    norm=False, data_format=self.data_format))
-        Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
-        tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
-        # return total loss
-        return tf.add_n(tf.losses.get_losses(loss_collection=collection),
-                        name=self.generator_total_loss_key)
+        with tf.variable_scope('generator_losses') as scope:
+            # adversarial loss
+            g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=pred_logits, labels=tf.ones_like(pred_logits)))
+            tf.summary.scalar('g_loss', g_loss)
+            ad_loss = tf.multiply(g_loss, 1e-2, name='adversarial_loss')
+            tf.losses.add_loss(ad_loss, loss_collection=collection)
+            # data range conversion
+            if self.output_range == 2:
+                gtruth = (gtruth + 1) * 0.5
+                pred = (pred + 1) * 0.5
+            # L2 regularization weight decay
+            if self.weight_decay > 0:
+                with tf.variable_scope('l2_regularize') as scope:
+                    l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
+                        tf.get_collection(self.generator_weight_key)])
+                    l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
+                    tf.losses.add_loss(l2_regularize, loss_collection=collection)
+            # L1 loss
+            weights1 *= 1 - alpha
+            weights2 *= alpha
+            if alpha != 1.0:
+                RGB_mad = tf.losses.absolute_difference(gtruth, pred,
+                    weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
+            # MS-SSIM: OPP color space - Y
+            if alpha != 0.0:
+                Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
+                Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
+                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
+                            norm=False, data_format=self.data_format))
+                Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
+                tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
+            # return total loss
+            return tf.add_n(tf.losses.get_losses(loss_collection=collection),
+                            name=self.generator_total_loss_key)
     
     def discriminator_losses(self, gtruth_logits, pred_logits):
         collection = self.discriminator_loss_key
-        # L2 regularization weight decay
-        if self.d_weight_decay > 0:
-            l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
-                tf.get_collection(self.discriminator_weight_key)])
-            l2_regularize = tf.multiply(l2_regularize, self.d_weight_decay,
-                name='d_l2_regularize_loss')
-            tf.losses.add_loss(l2_regularize, loss_collection=collection)
-        # discriminating loss
-        d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-            logits=gtruth_logits, labels=tf.ones_like(gtruth_logits)))
-        d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-            logits=pred_logits, labels=tf.zeros_like(pred_logits)))
-        tf.summary.scalar('d_loss_real', d_loss_real)
-        tf.summary.scalar('d_loss_fake', d_loss_fake)
-        d_loss = tf.add(d_loss_real, d_loss_fake, name='d_discriminating_loss')
-        tf.losses.add_loss(d_loss, loss_collection=collection)
-        # return total loss
-        return tf.add_n(tf.losses.get_losses(loss_collection=collection),
-                        name=self.discriminator_total_loss_key)
+        with tf.variable_scope('discriminator_losses') as scope:
+            # L2 regularization weight decay
+            if self.d_weight_decay > 0:
+                with tf.variable_scope('l2_regularize') as scope:
+                    l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
+                        tf.get_collection(self.discriminator_weight_key)])
+                    l2_regularize = tf.multiply(l2_regularize, self.d_weight_decay, name='loss')
+                    tf.losses.add_loss(l2_regularize, loss_collection=collection)
+            # adversarial loss
+            d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=gtruth_logits, labels=tf.ones_like(gtruth_logits)))
+            d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                logits=pred_logits, labels=tf.zeros_like(pred_logits)))
+            tf.summary.scalar('d_loss_real', d_loss_real)
+            tf.summary.scalar('d_loss_fake', d_loss_fake)
+            ad_loss = tf.add(d_loss_real, d_loss_fake, name='adversarial_loss')
+            tf.losses.add_loss(ad_loss, loss_collection=collection)
+            # return total loss
+            return tf.add_n(tf.losses.get_losses(loss_collection=collection),
+                            name=self.discriminator_total_loss_key)
     
     def build_model(self, images_lr=None, is_training=False):
         # input samples
@@ -452,8 +459,10 @@ class SRmodel(object):
         
         # compute gradients
         with tf.control_dependencies(update_ops):
-            d_opt = tf.train.AdamOptimizer(d_lr, beta1=self.learning_beta1, epsilon=self.epsilon)
-            g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1, epsilon=self.epsilon)
+            d_opt = tf.train.AdamOptimizer(d_lr, beta1=self.learning_beta1,
+                beta2=self.learning_beta2, epsilon=self.epsilon)
+            g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
+                beta2=self.learning_beta2, epsilon=self.epsilon)
             d_grads_and_vars = d_opt.compute_gradients(self.d_loss, var_list=self.d_vars)
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, var_list=self.g_vars)
         
