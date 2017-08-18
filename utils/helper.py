@@ -1,5 +1,10 @@
 import tensorflow as tf
 
+# stderr print
+def eprint(*args, **kwargs):
+    import sys
+    print(*args, file=sys.stderr, **kwargs)
+
 # divide 2 integers and round up
 def DivUp(dividend, divisor):
     return (dividend + divisor - 1) // divisor
@@ -36,14 +41,26 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
         for f in file_names:
             if os.path.splitext(f)[1].lower() in filter_ext:
                 file_path = os.path.join(dir_path, f)
-                if encoding: file_path = file_path.encode(encoding)
-                files.append(file_path)
+                try:
+                    if encoding: file_path = file_path.encode(encoding)
+                    files.append(file_path)
+                except UnicodeEncodeError as err:
+                    eprint(file_path)
+                    eprint(err)
         if not recursive: break
     return files
 
 # convert list of tf.Dimension to list of int/None
 def dim2int(shape):
     return [s.value if isinstance(s, tf.Dimension) else s for s in shape]
+
+# get Session from MoniteredSession
+def get_session(mon_sess):
+    session = mon_sess
+    while type(session).__name__ != 'Session':
+        #pylint: disable=W0212
+        session = session._sess
+    return session
 
 # reading images using FIFOQueue within tensorflow graph
 def ImageReader(files, channels=0, shuffle=False):

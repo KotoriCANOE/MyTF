@@ -55,15 +55,15 @@ tf.app.flags.DEFINE_float('init_factor', 1.0,
                             """Weights initialization STD factor for conv layers without activation.""")
 tf.app.flags.DEFINE_float('init_activation', 1.0,
                             """Weights initialization STD factor for conv layers with activation.""")
-tf.app.flags.DEFINE_float('weight_decay', 1e-5,
+tf.app.flags.DEFINE_float('weight_decay', 2e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-4,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('lr_min', 1e-8,
                             """Minimum learning rate""")
-tf.app.flags.DEFINE_float('lr_decay_steps', 1e3,
+tf.app.flags.DEFINE_float('lr_decay_steps', 500,
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.98,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.99,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
