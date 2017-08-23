@@ -41,7 +41,7 @@ tf.app.flags.DEFINE_string('activation', 'prelu',
 # model parameters - discriminator
 tf.app.flags.DEFINE_integer('d_blocks', 3,
                             """Number of blocks.""")
-tf.app.flags.DEFINE_integer('d_channels', 64,
+tf.app.flags.DEFINE_integer('d_channels', 48,
                             """Number of features in hidden layers.""")
 tf.app.flags.DEFINE_float('d_batch_norm', 0, #0.999,
                             """Moving average decay for Batch Normalization.""")
@@ -61,15 +61,15 @@ tf.app.flags.DEFINE_float('learning_rate', 1e-4,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('lr_min', 1e-8,
                             """Minimum learning rate""")
-tf.app.flags.DEFINE_float('lr_decay_steps', 500,
+tf.app.flags.DEFINE_float('lr_decay_steps', 200,
                             """Steps after which learning rate decays""")
 tf.app.flags.DEFINE_float('lr_decay_factor', 0.99,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
-tf.app.flags.DEFINE_float('learning_beta1', 0.9,
+tf.app.flags.DEFINE_float('learning_beta1', 0.5,
                             """beta1 for AdamOptimizer""")
-tf.app.flags.DEFINE_float('learning_beta2', 0.999,
+tf.app.flags.DEFINE_float('learning_beta2', 0.9,
                             """beta2 for AdamOptimizer""")
 tf.app.flags.DEFINE_float('epsilon', 1e-8,
                             """Fuzz term to avoid numerical instability""")
@@ -77,16 +77,25 @@ tf.app.flags.DEFINE_float('gradient_clipping', 0, #0.002,
                             """Gradient clipping factor""")
 tf.app.flags.DEFINE_float('loss_moving_average', 0, #0.9,
                             """The decay to use for the moving average of losses""")
-tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
-                            """The decay to use for the moving average of trainable variables""")
 
 # training parameters - discriminator
-tf.app.flags.DEFINE_float('d_weight_decay', 1e-5,
+tf.app.flags.DEFINE_float('d_weight_decay', 1e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('d_learning_rate', 1e-4,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('d_lr_min', 1e-8,
                             """Minimum learning rate""")
+tf.app.flags.DEFINE_integer('gan_loss', 2,
+                            """Loss function for GAN training\n"""
+                            """1: DCGAN;\n"""
+                            """2: WGAN-GP;\n"""
+                            """3: WGAN-GP using Hessian-Vector products trick;\n"""
+                            """4: WGAN-GP using finite difference of 2 random samples;\n"""
+                            """5: WGAN-GP using difference of real and fake samples;""")
+tf.app.flags.DEFINE_float('lp_lambda', 10,
+                          """Gradient penalty lambda hyperparameter""")
+tf.app.flags.DEFINE_integer('critic_iters', 5,
+                            """Number of discriminator training iters every generator training iter""")
 
 # model
 class SRmodel(object):
@@ -133,11 +142,12 @@ class SRmodel(object):
         self.epsilon = config.epsilon
         self.gradient_clipping = config.gradient_clipping
         self.loss_moving_average = config.loss_moving_average
-        self.train_moving_average = config.train_moving_average
         
         self.d_weight_decay = config.d_weight_decay
         self.d_learning_rate = config.d_learning_rate
         self.d_lr_min = config.d_lr_min
+        self.gan_loss = config.gan_loss
+        self.lp_lambda = config.lp_lambda
         
         self.generator_weight_key = 'generator_weights'
         self.generator_loss_key = 'generator_losses'
@@ -243,7 +253,7 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
         # return SR image
-        print('Totally {} convolutional layers.'.format(l))
+        print('Generator: totally {} convolutional layers.'.format(l))
         return last
     
     def discriminator(self, images, is_training=False, reuse=None):
@@ -256,6 +266,8 @@ class SRmodel(object):
         init_factor = self.init_factor
         init_activation = self.init_activation
         weight_key = self.discriminator_weight_key
+        channel_index = -3 if data_format == 'NCHW' else -1
+        reduce_strides = [1, 1, 2, 2] if data_format == 'NCHW' else [1, 2, 2, 1]
         # initialization
         last = images
         l = 0
@@ -268,15 +280,19 @@ class SRmodel(object):
                     batch_norm=None, is_training=is_training, activation=activation,
                     initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
-            # blocks
-            b = 0
+            # residual blocks
+            rb = 0
             skip2 = last
-            while b < self.d_blocks:
-                b += 1
+            while rb < self.d_blocks:
+                rb += 1
+                reduce_size = True
+                strides = reduce_strides if reduce_size else [1, 1, 1, 1]
+                double_channel = rb > 1
+                if double_channel: channels *= 2
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
-                    last = layers.conv2d(last, ksize=3, out_channels=channels,
-                        stride=2, padding='SAME', data_format=data_format,
+                    last = layers.conv2d(last, ksize=2, out_channels=channels,
+                        stride=strides, padding='SAME', data_format=data_format,
                         batch_norm=batch_norm, is_training=is_training, activation=activation,
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
@@ -284,14 +300,26 @@ class SRmodel(object):
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.conv2d(last, ksize=3, out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=batch_norm, is_training=is_training, activation=activation,
-                        initializer=initializer, init_factor=init_activation,
+                        batch_norm=batch_norm, is_training=is_training, activation=None,
+                        initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
-                channels *= 2
+                with tf.variable_scope('skip_connection{}'.format(l)) as scope:
+                    if reduce_size:
+                        skip2 = tf.nn.avg_pool(skip2, ksize=reduce_strides, strides=reduce_strides,
+                                               padding='SAME', data_format=data_format)
+                    if double_channel:
+                        padding = [[0, 0] for _ in range(4)]
+                        padding[channel_index] = [0, channels // 2]
+                        skip2 = tf.pad(skip2, padding, mode='CONSTANT')
+                    last = tf.add(last, skip2, 'elementwise_sum')
+                    skip2 = last
+                    last = layers.apply_activation(last, activation=activation,
+                                                   data_format=data_format)
             # final conv layer
+            channels *= 2
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
-                last = layers.conv2d(last, ksize=3, out_channels=channels,
+                last = layers.conv2d(last, ksize=2, out_channels=channels,
                     stride=2, padding='SAME', data_format=data_format,
                     batch_norm=batch_norm, is_training=is_training, activation=activation,
                     initializer=initializer, init_factor=init_activation,
@@ -309,6 +337,7 @@ class SRmodel(object):
             with tf.variable_scope('dense{}'.format(l)) as scope:
                 last = tf.contrib.layers.fully_connected(last, 1, activation_fn=None)
         # return discriminating logits
+        print('Critic: totally {} convolutional layers.'.format(l))
         return last
     
     def generator_losses(self, gtruth, pred, pred_logits, alpha=0.0, weights1=1.0, weights2=1.0):
@@ -316,10 +345,14 @@ class SRmodel(object):
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
             # adversarial loss
-            g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-                logits=pred_logits, labels=tf.ones_like(pred_logits)))
-            tf.summary.scalar('g_loss', g_loss)
-            ad_loss = tf.multiply(g_loss, 1e-2, name='adversarial_loss')
+            if self.gan_loss == 1:
+                g_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                    logits=pred_logits, labels=tf.ones_like(pred_logits)))
+                tf.summary.scalar('g_loss', g_loss)
+                ad_loss = tf.multiply(g_loss, 1e-2, name='adversarial_loss')
+            elif self.gan_loss in [2, 3, 4, 5]:
+                g_loss = tf.reduce_mean(pred_logits, name='g_loss')
+                ad_loss = tf.multiply(g_loss, -1e-3, name='adversarial_loss')
             tf.losses.add_loss(ad_loss, loss_collection=collection)
             # data range conversion
             if self.output_range == 2:
@@ -350,8 +383,49 @@ class SRmodel(object):
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
                             name=self.generator_total_loss_key)
     
-    def discriminator_losses(self, gtruth_logits, pred_logits):
+    def discriminator_losses(self, gtruth_logits, pred_logits, gtruth, pred):
         collection = self.discriminator_loss_key
+        # WGAN lipschitz-penalty
+        def random_interpolate():
+            alpha = tf.random_uniform(shape=tf.shape(gtruth), minval=0., maxval=1.)
+            differences = pred - gtruth
+            interpolates = alpha * differences + gtruth
+            return interpolates
+        if self.gan_loss == 2:
+            # compute gradients directly
+            # https://github.com/igul222/improved_wgan_training
+            inter = random_interpolate()
+            inter_logits = self.discriminator(inter, is_training=True, reuse=True)
+            gradients = tf.gradients(inter_logits, [inter])[0]
+            slopes = tf.norm(tf.contrib.layers.flatten(gradients), axis=1)
+        elif self.gan_loss == 3:
+            # compute gradients using Hessian-Vector products trick
+            # https://justindomke.wordpress.com/2009/01/17/hessian-vector-products/
+            small_r = 1e-6
+            alpha = tf.random_uniform(shape=tf.shape(gtruth), minval=0., maxval=1.)
+            differences = pred - gtruth
+            inter1 = (alpha + small_r) * differences + gtruth
+            inter2 = (alpha - small_r) * differences + gtruth
+            x_diff = (2 * small_r) * differences
+            inter_logits1 = self.discriminator(inter1, is_training=True, reuse=True)
+            inter_logits2 = self.discriminator(inter2, is_training=True, reuse=True)
+            y_diff = tf.abs(inter_logits1 - inter_logits2)
+            slopes = y_diff / tf.norm(tf.contrib.layers.flatten(x_diff), axis=1)
+        elif self.gan_loss == 4:
+            # compute slopes using finite difference of 2 random samples
+            # https://www.zhihu.com/question/52602529/answer/158727900
+            inter1 = random_interpolate()
+            inter2 = random_interpolate()
+            x_diff = inter1 - inter2
+            inter_logits1 = self.discriminator(inter1, is_training=True, reuse=True)
+            inter_logits2 = self.discriminator(inter2, is_training=True, reuse=True)
+            y_diff = tf.abs(inter_logits1 - inter_logits2)
+            slopes = y_diff / tf.norm(tf.contrib.layers.flatten(x_diff), axis=1)
+        elif self.gan_loss == 5:
+            # compute slopes using difference of real and fake samples
+            x_diff = pred - gtruth
+            y_diff = tf.abs(pred_logits - gtruth_logits)
+            slopes = y_diff / tf.norm(tf.contrib.layers.flatten(x_diff), axis=1)
         with tf.variable_scope('discriminator_losses') as scope:
             # L2 regularization weight decay
             if self.d_weight_decay > 0:
@@ -361,13 +435,27 @@ class SRmodel(object):
                     l2_regularize = tf.multiply(l2_regularize, self.d_weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
             # adversarial loss
-            d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-                logits=gtruth_logits, labels=tf.ones_like(gtruth_logits)))
-            d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-                logits=pred_logits, labels=tf.zeros_like(pred_logits)))
-            tf.summary.scalar('d_loss_real', d_loss_real)
-            tf.summary.scalar('d_loss_fake', d_loss_fake)
-            ad_loss = tf.add(d_loss_real, d_loss_fake, name='adversarial_loss')
+            if self.gan_loss == 1:
+                d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                    logits=gtruth_logits, labels=tf.ones_like(gtruth_logits)))
+                d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+                    logits=pred_logits, labels=tf.zeros_like(pred_logits)))
+                tf.summary.scalar('d_loss_real', d_loss_real)
+                tf.summary.scalar('d_loss_fake', d_loss_fake)
+                ad_loss = tf.add(d_loss_real, d_loss_fake, name='adversarial_loss')
+            elif self.gan_loss in [2, 3, 4, 5]:
+                d_real = tf.reduce_mean(gtruth_logits)
+                d_fake = tf.reduce_mean(pred_logits)
+                d_loss = d_fake - d_real
+                # WGAN lipschitz-penalty
+                K = 1.
+                gradient_penalty = tf.reduce_mean(tf.square(slopes - K))
+                lp_loss = self.lp_lambda * gradient_penalty
+                # summary
+                tf.summary.scalar('d_real', d_real)
+                tf.summary.scalar('d_fake', d_fake)
+                tf.summary.scalar('lp_loss', lp_loss)
+                ad_loss = tf.add(d_loss, lp_loss, name='adversarial_loss')
             tf.losses.add_loss(ad_loss, loss_collection=collection)
             # return total loss
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
@@ -412,14 +500,20 @@ class SRmodel(object):
         self.build_model(images_lr, is_training=True)
         
         # build discriminator
+        '''
         d_logits_hr = self.discriminator(self.images_hr, is_training=True)
         d_logits_sr = self.discriminator(self.images_sr, is_training=True, reuse=True)
+        '''
+        images = tf.concat([self.images_hr, self.images_sr], axis=0)
+        d_logits = self.discriminator(images, is_training=True)
+        d_logits_hr, d_logits_sr = tf.split(d_logits, 2, axis=0)
         
         # build generator losses
         self.g_loss = self.generator_losses(self.images_hr, self.images_sr, d_logits_sr)
         
         # build discriminator losses
-        self.d_loss = self.discriminator_losses(d_logits_hr, d_logits_sr)
+        self.d_loss = self.discriminator_losses(d_logits_hr, d_logits_sr,
+                                                self.images_hr, self.images_sr)
         
         # trainable variables
         t_vars = tf.trainable_variables()
@@ -445,44 +539,45 @@ class SRmodel(object):
         if loss_averages_op: update_ops.append(loss_averages_op)
         
         # decay the learning rate exponentially based on the number of steps
-        d_lr = self.d_learning_rate
         g_lr = self.learning_rate
+        d_lr = self.d_learning_rate
         if self.lr_decay_steps > 0 and self.lr_decay_factor != 1:
-            d_lr = tf.train.exponential_decay(d_lr, global_step,
-                self.lr_decay_steps, self.lr_decay_factor, staircase=True)
-            d_lr = tf.maximum(self.d_lr_min, d_lr)
             g_lr = tf.train.exponential_decay(g_lr, global_step,
                 self.lr_decay_steps, self.lr_decay_factor, staircase=True)
             g_lr = tf.maximum(self.lr_min, g_lr)
-        tf.summary.scalar('d_learning_rate', d_lr)
+            d_lr = tf.train.exponential_decay(d_lr, global_step,
+                self.lr_decay_steps, self.lr_decay_factor, staircase=True)
+            d_lr = tf.maximum(self.d_lr_min, d_lr)
         tf.summary.scalar('g_learning_rate', g_lr)
+        tf.summary.scalar('d_learning_rate', d_lr)
         
         # compute gradients
         with tf.control_dependencies(update_ops):
-            d_opt = tf.train.AdamOptimizer(d_lr, beta1=self.learning_beta1,
-                beta2=self.learning_beta2, epsilon=self.epsilon)
             g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
                 beta2=self.learning_beta2, epsilon=self.epsilon)
-            d_grads_and_vars = d_opt.compute_gradients(self.d_loss, var_list=self.d_vars)
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, var_list=self.g_vars)
+            d_opt = tf.train.AdamOptimizer(d_lr, beta1=self.learning_beta1,
+                beta2=self.learning_beta2, epsilon=self.epsilon)
+            d_grads_and_vars = d_opt.compute_gradients(self.d_loss, var_list=self.d_vars)
         
         # gradient clipping
         if self.gradient_clipping > 0:
-            d_clip_value = self.gradient_clipping / d_lr
             g_clip_value = self.gradient_clipping / g_lr
-            d_grads_and_vars = [(tf.clip_by_value(
-                    grad, -d_clip_value, d_clip_value, name='d_gradient_clipping'
-                    ), var) for grad, var in d_grads_and_vars]
             g_grads_and_vars = [(tf.clip_by_value(
                     grad, -g_clip_value, g_clip_value, name='g_gradient_clipping'
                     ), var) for grad, var in g_grads_and_vars]
+            d_clip_value = self.gradient_clipping / d_lr
+            d_grads_and_vars = [(tf.clip_by_value(
+                    grad, -d_clip_value, d_clip_value, name='d_gradient_clipping'
+                    ), var) for grad, var in d_grads_and_vars]
         
         # training ops
-        train_ops = []
+        g_train_ops = []
+        d_train_ops = []
         
         # apply gradient
-        train_ops.append(d_opt.apply_gradients(d_grads_and_vars, None))
-        train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
+        g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
+        d_train_ops.append(d_opt.apply_gradients(d_grads_and_vars, None))
         
         # add histograms for trainable variables
         for var in tf.trainable_variables():
@@ -493,14 +588,9 @@ class SRmodel(object):
             if grad is not None:
                 tf.summary.histogram(var.op.name + '/gradients', grad)
         
-        # track the moving averages of all trainable variables
-        if self.train_moving_average > 0:
-            variable_averages = tf.train.ExponentialMovingAverage(
-                    self.train_moving_average, global_step, name='train_moving_average')
-            variable_averages_op = variable_averages.apply(tf.trainable_variables())
-            train_ops.append(variable_averages_op)
-        
         # generate operation
-        with tf.control_dependencies(train_ops):
-            train_op = tf.no_op(name='train')
-        return train_op
+        with tf.control_dependencies(g_train_ops):
+            g_train_op = tf.no_op(name='g_train')
+        with tf.control_dependencies(d_train_ops):
+            d_train_op = tf.no_op(name='d_train')
+        return g_train_op, d_train_op

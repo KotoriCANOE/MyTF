@@ -22,9 +22,11 @@ tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
+tf.app.flags.DEFINE_string('pretrain_dir', './pre_train',
+                           """Directory where to load pre-trained model.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
-tf.app.flags.DEFINE_integer('save_steps', 0,
+tf.app.flags.DEFINE_integer('save_steps', 10000,
                             """Number of steps to save meta.""")
 tf.app.flags.DEFINE_integer('timeline_steps', 0,
                             """Number of steps to save timeline.""")
@@ -103,6 +105,8 @@ def train():
     epoch_size = steps_per_epoch * FLAGS.batch_size
     max_steps = steps_per_epoch * FLAGS.num_epochs
     files = files[:epoch_size]
+    steps_per_epoch //= FLAGS.critic_iters + 1
+    max_steps //= FLAGS.critic_iters + 1
     print('epoch size: {}\n{} steps per epoch\n{} epochs\n{} steps'.format(
         epoch_size, steps_per_epoch, FLAGS.num_epochs, max_steps))
     
@@ -123,11 +127,17 @@ def train():
         
         # training step and op
         global_step = tf.contrib.framework.get_or_create_global_step()
-        train_op = model.train(global_step)
+        g_train_op, d_train_op = model.train(global_step)
         
         # a saver object which will save all the variables
-        if FLAGS.save_steps > 0:
-            saver = tf.train.Saver()
+        saver = tf.train.Saver(var_list=model.g_vars, max_to_keep=1 << 16,
+                               save_relative_paths=True)
+        
+        # save the graph
+        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.pbtxt'),
+            as_text=True, clear_devices=True, clear_extraneous_savers=True)
+        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
+            as_text=False, clear_devices=True, clear_extraneous_savers=True)
         
         # monitored session
         gpu_options = tf.GPUOptions(allow_growth=True)
@@ -142,28 +152,33 @@ def train():
                        LoggerHook(gd_loss, steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
             # options
+            sess = helper.get_session(mon_sess)
             if FLAGS.timeline_steps > 0:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-            # run session
+            # restore pre-trained model
+            if FLAGS.pretrain_dir and not FLAGS.restore:
+                saver.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
+            # sessions
+            def run_sess(options=None, run_metadata=None):
+                for k in range(FLAGS.critic_iters):
+                    sess.run(d_train_op)
+                mon_sess.run(g_train_op, options=options, run_metadata=run_metadata)
+            # run sessions
             while not mon_sess.should_stop():
-                mon_sess.run(train_op)
-                # not work on MonitoredSession
-                '''
                 step = tf.train.global_step(sess, global_step)
                 if FLAGS.timeline_steps > 0 and step % FLAGS.timeline_steps == 0:
-                    sess.run(train_op, options=run_options, run_metadata=run_metadata)
+                    run_sess(run_options, run_metadata)
                     # Create the Timeline object, and write it to a json
                     tl = timeline.Timeline(run_metadata.step_stats)
                     ctf = tl.generate_chrome_trace_format()
                     with open(os.path.join(FLAGS.train_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
                         f.write(ctf)
                 else:
-                    sess.run(train_op)
+                    run_sess()
                 if FLAGS.save_steps > 0 and step % FLAGS.save_steps == 0:
                     saver.save(sess, os.path.join(FLAGS.train_dir, 'model_{:0>7}'.format(step)),
-                               write_meta_graph=True, write_state=True)
-                '''
+                               write_meta_graph=False, write_state=False)
 
 # main
 def main(argv=None):

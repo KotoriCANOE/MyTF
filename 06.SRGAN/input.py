@@ -386,11 +386,11 @@ def inputs(config, files, is_training=False, is_testing=False):
         return data, label
     
     # Dataset API
-    dataset = tf.contrib.data.Dataset.from_tensor_slices(tf.constant(files))
+    dataset = tf.contrib.data.Dataset.from_tensor_slices((files))
     dataset = dataset.map(parse1_func, num_threads=threads,
                           output_buffer_size=threads * 64)
-    dataset = dataset.map(lambda label: tf.py_func(parse2_pyfunc,
-                              [label], [tf.float32, tf.float32]),
+    dataset = dataset.map(lambda label: tuple(tf.py_func(parse2_pyfunc,
+                              [label], [tf.float32, tf.float32])),
                           num_threads=1 if is_testing else threads_py, output_buffer_size=threads_py * 64)
     dataset = dataset.map(parse3_func, num_threads=1 if is_testing else threads,
                           output_buffer_size=threads * 64)
