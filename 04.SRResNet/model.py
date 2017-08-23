@@ -333,10 +333,10 @@ class SRmodel(object):
                     ), var) for grad, var in g_grads_and_vars]
         
         # training ops
-        train_ops = []
+        g_train_ops = []
         
         # apply gradient
-        train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
+        g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
         
         # add histograms for trainable variables
         for var in tf.trainable_variables():
@@ -352,9 +352,9 @@ class SRmodel(object):
             variable_averages = tf.train.ExponentialMovingAverage(
                     self.train_moving_average, global_step, name='train_moving_average')
             variable_averages_op = variable_averages.apply(tf.trainable_variables())
-            train_ops.append(variable_averages_op)
+            g_train_ops.append(variable_averages_op)
         
         # generate operation
-        with tf.control_dependencies(train_ops):
-            train_op = tf.no_op(name='train')
-        return train_op
+        with tf.control_dependencies(g_train_ops):
+            g_train_op = tf.no_op(name='g_train')
+        return g_train_op
