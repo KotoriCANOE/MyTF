@@ -5,8 +5,8 @@ import tensorflow as tf
 sys.path.append('..')
 from utils import helper
 
-from MRS_input import inputs
-import MRS as model
+from input import inputs
+import model
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -18,10 +18,12 @@ tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
-tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
+tf.app.flags.DEFINE_string('test_dir', './val{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
-tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Test2',
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Val',
                            """Directory where stores the dataset.""")
+tf.app.flags.DEFINE_integer('var_index', 0,
+                            """Index of which the value changes.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
 tf.app.flags.DEFINE_integer('threads', 8,
@@ -32,21 +34,21 @@ tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
                             """Data layout format.""")
 tf.app.flags.DEFINE_integer('seq_size', 2048,
                             """Size of the 1-D sequence.""")
-tf.app.flags.DEFINE_integer('num_labels', 12,
+tf.app.flags.DEFINE_integer('num_labels', 16,
                             """Number of labels.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
-tf.app.flags.DEFINE_float('smoothing', 0.5,
+tf.app.flags.DEFINE_float('smoothing', 0.25,
                             """Spatial smoothing for the sequence.""")
-tf.app.flags.DEFINE_float('noise_scale', 0.03,
+tf.app.flags.DEFINE_float('noise_scale', 0.05,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.5,
                             """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_base', 0.1,
                             """Base ratio of the multiplicative noise.""")
-tf.app.flags.DEFINE_float('mse_thresh', 0.005,
+tf.app.flags.DEFINE_float('mse_thresh', 0.001,
                             """MSE lower than this value will be considered as correct prediction.""")
-tf.app.flags.DEFINE_float('mad_thresh', 0.05,
+tf.app.flags.DEFINE_float('mad_thresh', 0.02,
                             """MAD lower than this value will be considered as correct prediction.""")
 
 # setup tensorflow
@@ -109,9 +111,6 @@ def test():
                        'scyllo-inositol', 'succinate', 'taurine', 'valine']
     else:
         LABEL_NAMES = list(range(FLAGS.num_labels))
-    
-    print(*LABEL_NAMES)
-    print('No.{}'.format(FLAGS.postfix))
 
     # get dataset files
     labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')
@@ -179,16 +178,27 @@ def test():
         plt.figure()
         plt.title('Error Ratio Histogram - {}'.format(LABEL_NAMES[_]))
         plt.hist(errors, bins=100, range=(0, 1))
-        plt.savefig(os.path.join(FLAGS.test_dir, 'hist_{}.png'.format(_)))
+        plt.savefig(os.path.join(FLAGS.test_dir, 'hist{}_{}.png'.format(FLAGS.var_index, _)))
         plt.close()
     
     # labels
     labels_gt = np.concatenate(labels_gt, axis=0)
     labels_pd = np.concatenate(labels_pd, axis=0)
-    with open(os.path.join(FLAGS.test_dir, 'labels.log'), mode='w') as file:
+    with open(os.path.join(FLAGS.test_dir, 'labels{}.log'.format(FLAGS.var_index)), mode='w') as file:
         file.write('Labels (Ground Truth)\nLabels (Predicted)\n\n')
         for _ in range(epoch_size):
             file.write('{}\n{}\n\n'.format(labels_gt[_], labels_pd[_]))
+    
+    # draw plots
+    plt.figure()
+    plt.title('Predicted Responses to {}'.format(LABEL_NAMES[FLAGS.var_index]))
+    x = labels_gt[:, FLAGS.var_index]
+    for l in range(FLAGS.num_labels):
+        y = labels_pd[:, l]
+        plt.plot(x, y, label=LABEL_NAMES[l])
+    plt.legend(loc=2)
+    plt.savefig(os.path.join(FLAGS.test_dir, 'val{}.png'.format(FLAGS.var_index)))
+    plt.close()
     
     print('')
 
@@ -200,9 +210,8 @@ def main(argv=None):
     
     if not tf.gfile.IsDirectory(FLAGS.train_dir):
         raise FileNotFoundError('Could not find folder {}'.format(FLAGS.train_dir))
-    if tf.gfile.Exists(FLAGS.test_dir):
-        tf.gfile.DeleteRecursively(FLAGS.test_dir)
-    tf.gfile.MakeDirs(FLAGS.test_dir)
+    if not tf.gfile.Exists(FLAGS.test_dir):
+        tf.gfile.MakeDirs(FLAGS.test_dir)
     test()
 
 if __name__ == '__main__':
