@@ -19,7 +19,7 @@ tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
-tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Train1',
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Train1',
                            """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")

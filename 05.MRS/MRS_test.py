@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
 tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
-tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Test2',
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Test2',
                            """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")

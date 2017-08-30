@@ -111,10 +111,10 @@ def inference(spectrum, is_training):
             skip2 = last
             last = layers.apply_activation(last, activation=FLAGS.activation,
                                            data_format=FLAGS.data_format)
-    # final fully-connected layer
+    # final dense layer
     l += 1
     print(last.get_shape())
-    with tf.variable_scope('fc{}'.format(l)) as scope:
+    with tf.variable_scope('dense{}'.format(l)) as scope:
         last = tf.contrib.layers.flatten(last)
         last = tf.contrib.layers.fully_connected(last, FLAGS.num_labels, activation_fn=None)
     # return predicted labels

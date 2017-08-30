@@ -71,10 +71,9 @@ def inputs(files, labels_file, epoch_size=None, is_training=False, is_testing=Fa
         return data, label
     
     # Dataset API
-    dataset = tf.contrib.data.Dataset.from_tensor_slices(
-            (tf.constant(files), labels))
-    dataset = dataset.map(lambda file, label: tf.py_func(parse1_pyfunc,
-                          [file, label], [tf.float32, tf.float32]),
+    dataset = tf.contrib.data.Dataset.from_tensor_slices((tf.constant(files), labels))
+    dataset = dataset.map(lambda file, label: tuple(tf.py_func(parse1_pyfunc,
+                          [file, label], [tf.float32, tf.float32])),
                           num_threads=1 if is_testing else threads, output_buffer_size=threads * 64)
     #dataset = dataset.map(parse2_func, num_threads=threads,
     #                      output_buffer_size=threads * 64)

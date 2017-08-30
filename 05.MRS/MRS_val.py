@@ -20,7 +20,7 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
 tf.app.flags.DEFINE_string('test_dir', './val{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
-tf.app.flags.DEFINE_string('dataset', '../Dataset.MRS/Val',
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Val',
                            """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_integer('var_index', 0,
                             """Index of which the value changes.""")
