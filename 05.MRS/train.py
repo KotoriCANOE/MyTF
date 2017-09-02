@@ -3,11 +3,12 @@ import os
 from datetime import datetime
 import time
 import tensorflow as tf
+from tensorflow.python.client import timeline
 sys.path.append('..')
 from utils import helper
 
 from input import inputs
-import model
+from model import MRSmodel
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -15,14 +16,21 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
+# parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
+tf.app.flags.DEFINE_string('pretrain_dir', '',
+                           """Directory where to load pre-trained model.""")
 tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Train1',
                            """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
+tf.app.flags.DEFINE_integer('save_steps', 5000,
+                            """Number of steps to save meta.""")
+tf.app.flags.DEFINE_integer('timeline_steps', 0,
+                            """Number of steps to save timeline.""")
 tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('epoch_size', 0,
@@ -33,15 +41,9 @@ tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
 tf.app.flags.DEFINE_integer('log_frequency', 1000,
                             """Log frequency.""")
-tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
-                            """Data layout format.""")
-tf.app.flags.DEFINE_integer('seq_size', 2048,
-                            """Size of the 1-D sequence.""")
-tf.app.flags.DEFINE_integer('num_labels', 12,
-                            """Number of labels.""")
 tf.app.flags.DEFINE_integer('batch_size', 64,
                             """Batch size.""")
-tf.app.flags.DEFINE_integer('buffer_size', 8192,
+tf.app.flags.DEFINE_integer('buffer_size', 100000,
                             """Buffer size for random shuffle.""")
 tf.app.flags.DEFINE_float('smoothing', 0.5,
                             """Spatial smoothing for the sequence.""")
@@ -76,25 +78,13 @@ class LoggerHook(tf.train.SessionRunHook):
             duration = current_time - self._start_time
             self._start_time = current_time
 
-            mad = run_values.results
+            loss = run_values.results
             examples_per_sec = FLAGS.log_frequency * FLAGS.batch_size / duration
             sec_per_batch = float(duration / FLAGS.log_frequency)
 
-            format_str = '{}: epoch {}, step {}, MAD = {:.5} ({:.0f} examples/sec; {:.3f} sec/batch)'
+            format_str = '{}: epoch {}, step {}, loss = {:.5} ({:.0f} samples/sec; {:.3f} sec/batch)'
             print(format_str.format(datetime.now(), self._epoch, self._step,
-                                    mad, examples_per_sec, sec_per_batch))
-
-# losses
-def loss_mse(labels_gt, labels_pd):
-    mse = tf.losses.mean_squared_error(labels_gt, labels_pd, weights=1.0)
-    return mse
-
-def loss_mad(labels_gt, labels_pd):
-    mad = tf.losses.absolute_difference(labels_gt, labels_pd, weights=1.0)
-    return mad
-
-def total_loss():
-    return tf.losses.get_total_loss()
+                                    loss, examples_per_sec, sec_per_batch))
 
 # profiler
 def profiler(train_op=None):
@@ -161,7 +151,7 @@ def profiler(train_op=None):
 
 # training
 def train():
-    labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')
+    labels_file = os.path.join(FLAGS.dataset, 'labels/labels.npy')
     files = helper.listdir_files(FLAGS.dataset, recursive=False,
                                  filter_ext=['.npy'],
                                  encoding='utf-8')
@@ -176,19 +166,30 @@ def train():
     with tf.Graph().as_default():
         # pre-processing for input
         with tf.device('/cpu:0'):
-            spectrum, labels_gt = inputs(files, labels_file, epoch_size, is_training=True)
+            spectrum, labels_ref = inputs(FLAGS, files, labels_file, epoch_size, is_training=True)
         
-        # model inference and losses
-        labels_pd = model.inference(spectrum, is_training=True)
-        main_loss = loss_mad(labels_gt, labels_pd)
-        train_loss = total_loss()
+        # build model
+        model = MRSmodel(FLAGS, data_format=FLAGS.data_format,
+            seq_size=FLAGS.seq_size, num_labels=FLAGS.num_labels)
+        
+        g_loss = model.build_train(spectrum, labels_ref)
         
         # training step and op
         global_step = tf.contrib.framework.get_or_create_global_step()
-        train_op = model.train(train_loss, global_step)
+        g_train_op = model.train(global_step)
         
         # profiler
         #profiler(train_op)
+        
+        # a saver object which will save all the variables
+        saver = tf.train.Saver(var_list=model.g_vars, max_to_keep=1 << 16,
+                               save_relative_paths=True)
+        
+        # save the graph
+        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.pbtxt'),
+            as_text=True, clear_devices=True, clear_extraneous_savers=True)
+        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
+            as_text=False, clear_devices=True, clear_extraneous_savers=True)
         
         # monitored session
         gpu_options = tf.GPUOptions(allow_growth=True)
@@ -198,12 +199,35 @@ def train():
         with tf.train.MonitoredTrainingSession(
                 checkpoint_dir=FLAGS.train_dir,
                 hooks=[tf.train.StopAtStepHook(last_step=max_steps),
-                       tf.train.NanTensorHook(train_loss),
-                       LoggerHook(main_loss, steps_per_epoch)],
+                       tf.train.NanTensorHook(g_loss),
+                       LoggerHook(g_loss, steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
+            # options
+            sess = helper.get_session(mon_sess)
+            if FLAGS.timeline_steps > 0:
+                run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+                run_metadata = tf.RunMetadata()
+            # restore pre-trained model
+            if FLAGS.pretrain_dir and not FLAGS.restore:
+                saver.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
+            # sessions
+            def run_sess(options=None, run_metadata=None):
+                mon_sess.run(g_train_op, options=options, run_metadata=run_metadata)
             # run session
             while not mon_sess.should_stop():
-                mon_sess.run(train_op)
+                step = tf.train.global_step(sess, global_step)
+                if FLAGS.timeline_steps > 0 and step % FLAGS.timeline_steps == 0:
+                    run_sess(run_options, run_metadata)
+                    # Create the Timeline object, and write it to a json
+                    tl = timeline.Timeline(run_metadata.step_stats)
+                    ctf = tl.generate_chrome_trace_format()
+                    with open(os.path.join(FLAGS.train_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
+                        f.write(ctf)
+                else:
+                    run_sess()
+                if FLAGS.save_steps > 0 and step % FLAGS.save_steps == 0:
+                    saver.save(sess, os.path.join(FLAGS.train_dir, 'model_{:0>7}'.format(step)),
+                               write_meta_graph=False, write_state=False)
 
 # main
 def main(argv=None):

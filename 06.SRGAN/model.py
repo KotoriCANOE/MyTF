@@ -59,7 +59,7 @@ tf.app.flags.DEFINE_float('weight_decay', 2e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-4,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_min', 1e-8,
+tf.app.flags.DEFINE_float('lr_min', 1e-5,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 200,
                             """Steps after which learning rate decays""")
@@ -210,7 +210,7 @@ class SRmodel(object):
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                    last = tf.add(last, skip2, 'elementwise_sum')
+                    last = tf.add(last, skip2)
                     skip2 = last
                     last = layers.apply_activation(last, activation=activation,
                                                    data_format=data_format)
@@ -223,7 +223,7 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                last = tf.add(last, skip1, 'elementwise_sum')
+                last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
                                                data_format=data_format)
             # resize conv layer
@@ -311,7 +311,7 @@ class SRmodel(object):
                         padding = [[0, 0] for _ in range(4)]
                         padding[channel_index] = [0, channels // 2]
                         skip2 = tf.pad(skip2, padding, mode='CONSTANT')
-                    last = tf.add(last, skip2, 'elementwise_sum')
+                    last = tf.add(last, skip2)
                     skip2 = last
                     last = layers.apply_activation(last, activation=activation,
                                                    data_format=data_format)
@@ -337,10 +337,10 @@ class SRmodel(object):
             with tf.variable_scope('dense{}'.format(l)) as scope:
                 last = tf.contrib.layers.fully_connected(last, 1, activation_fn=None)
         # return discriminating logits
-        print('Critic: totally {} convolutional layers.'.format(l))
+        print('Critic: totally {} convolutional/dense layers.'.format(l))
         return last
     
-    def generator_losses(self, gtruth, pred, pred_logits, alpha=0.0, weights1=1.0, weights2=1.0):
+    def generator_losses(self, ref, pred, pred_logits, alpha=0.0, weights1=1.0, weights2=1.0):
         import utils.image
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
@@ -356,7 +356,7 @@ class SRmodel(object):
             tf.losses.add_loss(ad_loss, loss_collection=collection)
             # data range conversion
             if self.output_range == 2:
-                gtruth = (gtruth + 1) * 0.5
+                ref = (ref + 1) * 0.5
                 pred = (pred + 1) * 0.5
             # L2 regularization weight decay
             if self.weight_decay > 0:
@@ -369,13 +369,13 @@ class SRmodel(object):
             weights1 *= 1 - alpha
             weights2 *= alpha
             if alpha != 1.0:
-                RGB_mad = tf.losses.absolute_difference(gtruth, pred,
+                RGB_mad = tf.losses.absolute_difference(ref, pred,
                     weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
             # MS-SSIM: OPP color space - Y
             if alpha != 0.0:
-                Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
+                Y_ref = utils.image.RGB2Y(ref, data_format=self.data_format)
                 Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
-                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
+                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_ref, Y_pred, sigma=[0.6,1.5,4],
                             norm=False, data_format=self.data_format))
                 Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
                 tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
@@ -383,13 +383,13 @@ class SRmodel(object):
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
                             name=self.generator_total_loss_key)
     
-    def discriminator_losses(self, gtruth_logits, pred_logits, gtruth, pred):
+    def discriminator_losses(self, ref_logits, pred_logits, ref, pred):
         collection = self.discriminator_loss_key
         # WGAN lipschitz-penalty
         def random_interpolate():
-            alpha = tf.random_uniform(shape=tf.shape(gtruth), minval=0., maxval=1.)
-            differences = pred - gtruth
-            interpolates = alpha * differences + gtruth
+            alpha = tf.random_uniform(shape=tf.shape(ref), minval=0., maxval=1.)
+            differences = pred - ref
+            interpolates = alpha * differences + ref
             return interpolates
         if self.gan_loss == 2:
             # compute gradients directly
@@ -402,10 +402,10 @@ class SRmodel(object):
             # compute gradients using Hessian-Vector products trick
             # https://justindomke.wordpress.com/2009/01/17/hessian-vector-products/
             small_r = 1e-6
-            alpha = tf.random_uniform(shape=tf.shape(gtruth), minval=0., maxval=1.)
-            differences = pred - gtruth
-            inter1 = (alpha + small_r) * differences + gtruth
-            inter2 = (alpha - small_r) * differences + gtruth
+            alpha = tf.random_uniform(shape=tf.shape(ref), minval=0., maxval=1.)
+            differences = pred - ref
+            inter1 = (alpha + small_r) * differences + ref
+            inter2 = (alpha - small_r) * differences + ref
             x_diff = (2 * small_r) * differences
             inter_logits1 = self.discriminator(inter1, is_training=True, reuse=True)
             inter_logits2 = self.discriminator(inter2, is_training=True, reuse=True)
@@ -423,8 +423,8 @@ class SRmodel(object):
             slopes = y_diff / tf.norm(tf.contrib.layers.flatten(x_diff), axis=1)
         elif self.gan_loss == 5:
             # compute slopes using difference of real and fake samples
-            x_diff = pred - gtruth
-            y_diff = tf.abs(pred_logits - gtruth_logits)
+            x_diff = pred - ref
+            y_diff = tf.abs(pred_logits - ref_logits)
             slopes = y_diff / tf.norm(tf.contrib.layers.flatten(x_diff), axis=1)
         with tf.variable_scope('discriminator_losses') as scope:
             # L2 regularization weight decay
@@ -437,14 +437,14 @@ class SRmodel(object):
             # adversarial loss
             if self.gan_loss == 1:
                 d_loss_real = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-                    logits=gtruth_logits, labels=tf.ones_like(gtruth_logits)))
+                    logits=ref_logits, labels=tf.ones_like(ref_logits)))
                 d_loss_fake = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
                     logits=pred_logits, labels=tf.zeros_like(pred_logits)))
                 tf.summary.scalar('d_loss_real', d_loss_real)
                 tf.summary.scalar('d_loss_fake', d_loss_fake)
                 ad_loss = tf.add(d_loss_real, d_loss_fake, name='adversarial_loss')
             elif self.gan_loss in [2, 3, 4, 5]:
-                d_real = tf.reduce_mean(gtruth_logits)
+                d_real = tf.reduce_mean(ref_logits)
                 d_fake = tf.reduce_mean(pred_logits)
                 d_loss = d_fake - d_real
                 # WGAN lipschitz-penalty
@@ -462,7 +462,7 @@ class SRmodel(object):
                             name=self.discriminator_total_loss_key)
     
     def build_model(self, images_lr=None, is_training=False):
-        # input samples
+        # set inputs
         if images_lr is None:
             self.images_lr = tf.placeholder(self.dtype, self.shape_lr, name='Input')
         else:
@@ -471,23 +471,23 @@ class SRmodel(object):
         if self.input_range == 2:
             self.images_lr = self.images_lr * 2 - 1
         
-        # apply generator to input samples
+        # apply generator to inputs
         self.images_sr = self.generator(self.images_lr, is_training=is_training)
         
-        # generated output samples
+        # generated outputs
         self.images_sr.set_shape(self.shape_hr)
         
-        # restore [0, 1] range for generated output samples
+        # restore [0, 1] range for generated outputs
         if self.output_range == 2:
             tf.multiply(self.images_sr + 1, 0.5, name='Output')
         else:
             tf.identity(self.images_sr, name='Output')
         
-        # return generated samples
+        # return generated results
         return self.images_sr
     
     def build_train(self, images_lr=None, images_hr=None):
-        # output samples - from data generating distribution
+        # reference outputs - from data generating distribution
         if images_hr is None:
             self.images_hr = tf.placeholder(self.dtype, self.shape_hr, name='Label')
         else:

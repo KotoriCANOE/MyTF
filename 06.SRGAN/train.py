@@ -2,7 +2,6 @@ import sys
 import os
 from datetime import datetime
 import time
-import numpy as np
 import tensorflow as tf
 from tensorflow.python.client import timeline
 sys.path.append('..')
@@ -90,7 +89,7 @@ class LoggerHook(tf.train.SessionRunHook):
             examples_per_sec = FLAGS.log_frequency * FLAGS.batch_size / duration
             sec_per_batch = float(duration / FLAGS.log_frequency)
 
-            format_str = '{}: epoch {}, step {}, g_loss = {:.5}, d_loss = {:.5} ({:.0f} examples/sec; {:.3f} sec/batch)'
+            format_str = '{}: epoch {}, step {}, g_loss = {:.5}, d_loss = {:.5} ({:.0f} samples/sec; {:.3f} sec/batch)'
             print(format_str.format(datetime.now(), self._epoch, self._step,
                                     loss[0], loss[1], examples_per_sec, sec_per_batch))
 

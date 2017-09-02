@@ -6,7 +6,7 @@ sys.path.append('..')
 from utils import helper
 
 from input import inputs
-import model
+from model import MRSmodel
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -14,6 +14,7 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
+# parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
@@ -22,18 +23,14 @@ tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
 tf.app.flags.DEFINE_string('dataset', '../../Dataset.MRS/Test2',
                            """Directory where stores the dataset.""")
+tf.app.flags.DEFINE_boolean('progress', False,
+                            """Whether to test across the entire training procedure.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
 tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
-                            """Data layout format.""")
-tf.app.flags.DEFINE_integer('seq_size', 2048,
-                            """Size of the 1-D sequence.""")
-tf.app.flags.DEFINE_integer('num_labels', 12,
-                            """Number of labels.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
 tf.app.flags.DEFINE_float('smoothing', 0.5,
@@ -68,11 +65,11 @@ def setup():
     return sess, summary_writer
 
 # losses
-def get_losses(labels_gt, labels_pd):
+def get_losses(ref, pred):
     # losses
-    mse = tf.losses.mean_squared_error(labels_gt, labels_pd, weights=1.0)
-    mad = tf.losses.absolute_difference(labels_gt, labels_pd, weights=1.0)
-    diff = tf.subtract(labels_pd, labels_gt)
+    mse = tf.losses.mean_squared_error(ref, pred, weights=1.0)
+    mad = tf.losses.absolute_difference(ref, pred, weights=1.0)
+    diff = tf.subtract(pred, ref)
     sqr_diff = tf.multiply(diff, diff)
     abs_diff = tf.abs(diff)
     
@@ -86,12 +83,10 @@ def get_losses(labels_gt, labels_pd):
     
     # error ratio
     epsilon = FLAGS.mad_thresh
-    error_ratio = tf.divide(abs_diff, labels_gt + epsilon)
+    error_ratio = tf.divide(abs_diff, ref + epsilon)
     
+    #return each loss
     return mse, mad, mse_valid, mad_valid, FP, FN, error_ratio
-
-def total_loss():
-    return tf.losses.get_total_loss()
 
 # testing
 def test():
@@ -114,7 +109,7 @@ def test():
     print('No.{}'.format(FLAGS.postfix))
 
     # get dataset files
-    labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')
+    labels_file = os.path.join(FLAGS.dataset, 'labels/labels.npy')
     files = helper.listdir_files(FLAGS.dataset, recursive=False,
                                  filter_ext=['.npy'],
                                  encoding=True)
@@ -129,47 +124,73 @@ def test():
         
         # pre-processing for input
         with tf.device('/cpu:0'):
-            spectrum, labels_gt = inputs(files, labels_file, epoch_size, is_testing=True)
+            spectrum, labels_ref = inputs(FLAGS, files, labels_file, epoch_size, is_testing=True)
         
-        # model inference and losses
-        labels_pd = model.inference(spectrum, is_training=False)
-        ret_loss = list(get_losses(labels_gt, labels_pd))
-        ret_labels = [labels_gt, labels_pd]
+        # build model
+        model = MRSmodel(FLAGS, data_format=FLAGS.data_format,
+            seq_size=FLAGS.seq_size, num_labels=FLAGS.num_labels)
         
-        # restore variables from checkpoint
-        saver = tf.train.Saver()
-        saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
+        model.build_model(spectrum)
         
-        # run session
+        # get output
+        labels_pred = tf.get_default_graph().get_tensor_by_name('Output:0')
+        
+        # losses
+        ret_loss = list(get_losses(labels_ref, labels_pred))
+        ret_labels = [labels_ref, labels_pred]
         ret = ret_loss + ret_labels
         ret_loss = ret[:len(ret_loss) - 1]
-        sum_loss = [0 for _ in range(len(ret_loss))]
-        all_errors = []
-        labels_gt = []
-        labels_pd = []
-        for i in range(max_steps):
-            cur_ret = sess.run(ret)
-            cur_loss = cur_ret[0:len(ret_loss)]
-            cur_errors = cur_ret[len(ret_loss)]
-            labels_gt.append(cur_ret[len(ret_loss) + 1])
-            labels_pd.append(cur_ret[len(ret_loss) + 2])
-            all_errors.append(cur_errors)
-            # monitor losses
-            for _ in range(len(ret_loss)):
-                sum_loss[_] += cur_loss[_]
-            #print('batch {}, MSE {}, MAD {}, MSE valid {}, MAD valid {}, False Positives {}, False Negatives {}'.format(i, *cur_loss))
+        
+        # model files
+        if FLAGS.progress:
+            mfiles = helper.listdir_files(FLAGS.train_dir, recursive=False,
+                                          filter_ext=['.index'],
+                                          encoding=None)
+            mfiles = [f[:-6] for f in mfiles if 'model_' in f]
+            mfiles.sort()
+            stats = []
+        else:
+            mfiles = [tf.train.latest_checkpoint(FLAGS.train_dir)]
+        
+        for model_file in mfiles:
+            # restore variables from checkpoint
+            saver = tf.train.Saver()
+            saver.restore(sess, model_file)
+            
+            # run session
+            sum_loss = [0 for _ in range(len(ret_loss))]
+            all_errors = []
+            labels_ref = []
+            labels_pred = []
+            for i in range(max_steps):
+                cur_ret = sess.run(ret)
+                cur_loss = cur_ret[0:len(ret_loss)]
+                cur_errors = cur_ret[len(ret_loss)]
+                labels_ref.append(cur_ret[len(ret_loss) + 1])
+                labels_pred.append(cur_ret[len(ret_loss) + 2])
+                all_errors.append(cur_errors)
+                # monitor losses
+                for _ in range(len(ret_loss)):
+                    sum_loss[_] += cur_loss[_]
+                #print('batch {}, MSE {}, MAD {}, MSE valid {}, MAD valid {}, False Positives {}, False Negatives {}'.format(i, *cur_loss))
+            
+            # summary
+            mean_loss = [l / max_steps for l in sum_loss]
+            mean_loss[2] /= FLAGS.batch_size
+            mean_loss[3] /= FLAGS.batch_size
+            mean_loss[4] /= FLAGS.batch_size * FLAGS.num_labels
+            mean_loss[5] /= FLAGS.batch_size * FLAGS.num_labels
+            print('{} Metabolites'.format(FLAGS.num_labels))
+            print('MSE threshold {}'.format(FLAGS.mse_thresh))
+            print('MAD threshold {}'.format(FLAGS.mad_thresh))
+            print('Totally {} Samples, MSE {}, MAD {}, MSE accuracy {}, MAD accuracy {}, FP rate {}, FN rate {}'.format(epoch_size, *mean_loss))
+            
+            # save stats
+            if FLAGS.progress:
+                model_num = os.path.split(model_file)[1][6:]
+                stats.append(np.array([float(model_num)] + mean_loss))
+        
         sess.close()
-    
-    # summary
-    mean_loss = [l / max_steps for l in sum_loss]
-    mean_loss[2] /= FLAGS.batch_size
-    mean_loss[3] /= FLAGS.batch_size
-    mean_loss[4] /= FLAGS.batch_size * FLAGS.num_labels
-    mean_loss[5] /= FLAGS.batch_size * FLAGS.num_labels
-    print('{} Metabolites'.format(FLAGS.num_labels))
-    print('MSE threshold {}'.format(FLAGS.mse_thresh))
-    print('MAD threshold {}'.format(FLAGS.mad_thresh))
-    print('Totally {} Samples, MSE {}, MAD {}, MSE accuracy {}, MAD accuracy {}, FP rate {}, FN rate {}'.format(epoch_size, *mean_loss))
     
     # errors
     import matplotlib.pyplot as plt
@@ -183,12 +204,27 @@ def test():
         plt.close()
     
     # labels
-    labels_gt = np.concatenate(labels_gt, axis=0)
-    labels_pd = np.concatenate(labels_pd, axis=0)
+    labels_ref = np.concatenate(labels_ref, axis=0)
+    labels_pred = np.concatenate(labels_pred, axis=0)
     with open(os.path.join(FLAGS.test_dir, 'labels.log'), mode='w') as file:
         file.write('Labels (Ground Truth)\nLabels (Predicted)\n\n')
         for _ in range(epoch_size):
-            file.write('{}\n{}\n\n'.format(labels_gt[_], labels_pd[_]))
+            file.write('{}\n{}\n\n'.format(labels_ref[_], labels_pred[_]))
+    
+    # save stats
+    if FLAGS.progress:
+        stats = np.stack(stats)
+        np.save(os.path.join(FLAGS.test_dir, 'stats.npy'), stats)
+        plt.figure()
+        plt.title('Test Error with Training Progress')
+        plt.xlabel('training iterations')
+        plt.ylabel('mean absolute difference')
+        plt.plot(stats[:, 0], stats[:, 2])
+        axis = list(plt.axis())
+        axis[2] = 0
+        plt.axis(axis)
+        plt.savefig(os.path.join(FLAGS.test_dir, 'stats.png'))
+        plt.close()
     
     print('')
 

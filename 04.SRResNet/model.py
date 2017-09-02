@@ -49,7 +49,7 @@ tf.app.flags.DEFINE_float('weight_decay', 2e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_min', 1e-8,
+tf.app.flags.DEFINE_float('lr_min', 1e-5,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 500,
                             """Steps after which learning rate decays""")
@@ -170,7 +170,7 @@ class SRmodel(object):
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                    last = tf.add(last, skip2, 'elementwise_sum')
+                    last = tf.add(last, skip2)
                     skip2 = last
                     last = layers.apply_activation(last, activation=activation,
                                                    data_format=data_format)
@@ -183,7 +183,7 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                last = tf.add(last, skip1, 'elementwise_sum')
+                last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
                                                data_format=data_format)
             # resize conv layer
@@ -216,13 +216,13 @@ class SRmodel(object):
         print('Totally {} convolutional layers.'.format(l))
         return last
     
-    def generator_losses(self, gtruth, pred, alpha=0.10, weights1=1.0, weights2=1.0):
+    def generator_losses(self, ref, pred, alpha=0.10, weights1=1.0, weights2=1.0):
         import utils.image
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
             # data range conversion
             if self.output_range == 2:
-                gtruth = (gtruth + 1) * 0.5
+                ref = (ref + 1) * 0.5
                 pred = (pred + 1) * 0.5
             # L2 regularization weight decay
             if self.weight_decay > 0:
@@ -235,13 +235,13 @@ class SRmodel(object):
             weights1 *= 1 - alpha
             weights2 *= alpha
             if alpha != 1.0:
-                RGB_mad = tf.losses.absolute_difference(gtruth, pred,
+                RGB_mad = tf.losses.absolute_difference(ref, pred,
                     weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
             # MS-SSIM: OPP color space - Y
             if alpha != 0.0:
-                Y_gtruth = utils.image.RGB2Y(gtruth, data_format=self.data_format)
+                Y_ref = utils.image.RGB2Y(ref, data_format=self.data_format)
                 Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
-                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_gtruth, Y_pred, sigma=[0.6,1.5,4],
+                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_ref, Y_pred, sigma=[0.6,1.5,4],
                             norm=False, data_format=self.data_format))
                 Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
                 tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
@@ -250,7 +250,7 @@ class SRmodel(object):
                             name=self.generator_total_loss_key)
     
     def build_model(self, images_lr=None, is_training=False):
-        # input samples
+        # set inputs
         if images_lr is None:
             self.images_lr = tf.placeholder(self.dtype, self.shape_lr, name='Input')
         else:
@@ -259,20 +259,20 @@ class SRmodel(object):
         if self.input_range == 2:
             self.images_lr = self.images_lr * 2 - 1
         
-        # apply generator to input samples
+        # apply generator to inputs
         self.images_sr = self.generator(self.images_lr, is_training=is_training)
         
-        # restore [0, 1] range for generated output samples
+        # restore [0, 1] range for generated outputs
         if self.output_range == 2:
             tf.multiply(self.images_sr + 1, 0.5, name='Output')
         else:
             tf.identity(self.images_sr, name='Output')
         
-        # return generated samples
+        # return generated results
         return self.images_sr
     
     def build_train(self, images_lr=None, images_hr=None):
-        # output samples - from data generating distribution
+        # reference outputs - from data generating distribution
         if images_hr is None:
             self.images_hr = tf.placeholder(self.dtype, self.shape_hr, name='Label')
         else:

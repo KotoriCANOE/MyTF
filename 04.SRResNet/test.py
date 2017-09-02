@@ -68,19 +68,19 @@ def setup():
     return sess, summary_writer
 
 # losses
-def get_losses(gtruth, pred):
+def get_losses(ref, pred):
     # RGB color space
-    RGB_mse = tf.losses.mean_squared_error(gtruth, pred, weights=1.0)
-    RGB_mad = tf.losses.absolute_difference(gtruth, pred, weights=1.0)
+    RGB_mse = tf.losses.mean_squared_error(ref, pred, weights=1.0)
+    RGB_mad = tf.losses.absolute_difference(ref, pred, weights=1.0)
+    
     # OPP color space - Y
-    Y_gtruth = utils.image.RGB2Y(gtruth, data_format=FLAGS.data_format)
+    Y_ref = utils.image.RGB2Y(ref, data_format=FLAGS.data_format)
     Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
-    Y_ss_ssim = utils.image.SS_SSIM(Y_gtruth, Y_pred, data_format=FLAGS.data_format)
-    Y_ms_ssim = utils.image.MS_SSIM2(Y_gtruth, Y_pred, norm=True, data_format=FLAGS.data_format)
+    Y_ss_ssim = utils.image.SS_SSIM(Y_ref, Y_pred, data_format=FLAGS.data_format)
+    Y_ms_ssim = utils.image.MS_SSIM2(Y_ref, Y_pred, norm=True, data_format=FLAGS.data_format)
+    
+    #return each loss
     return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim
-
-def total_loss():
-    return tf.losses.get_total_loss()
 
 # testing
 def test():
