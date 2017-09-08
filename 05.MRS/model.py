@@ -186,8 +186,8 @@ class MRSmodel(object):
                         tf.get_collection(self.inference_weight_key)])
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
-            # L2 loss
             '''
+            # L2 loss
             mse = tf.losses.mean_squared_error(ref, pred, weights=1.0,
                 loss_collection=collection, scope='MSE_loss')
             '''
