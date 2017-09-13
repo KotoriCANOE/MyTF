@@ -23,11 +23,15 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
 tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and test results.""")
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Test',
+                           """Directory where stores the dataset.""")
+tf.app.flags.DEFINE_boolean('progress', False,
+                            """Whether to test across the entire training procedure.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
-tf.app.flags.DEFINE_integer('threads', 8,
+tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
-tf.app.flags.DEFINE_integer('threads_py', 4,
+tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -45,9 +49,6 @@ tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
-
-# constants
-TESTSET_PATH = r'..\Dataset.SR\Test'
 
 # setup tensorflow
 def setup():
@@ -84,7 +85,7 @@ def get_losses(ref, pred):
 
 # testing
 def test():
-    files = helper.listdir_files(TESTSET_PATH,
+    files = helper.listdir_files(FLAGS.dataset,
                                  filter_ext=['.jpeg', '.jpg', '.png'],
                                  encoding=True)
     steps_per_epoch = len(files) // FLAGS.batch_size
@@ -114,10 +115,6 @@ def test():
         # losses
         ret_loss = list(get_losses(images_hr, images_sr))
         
-        # restore variables from checkpoint
-        saver = tf.train.Saver()
-        saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
-        
         # post-processing for output
         with tf.device('/cpu:0'):
             # data format conversion
@@ -139,54 +136,97 @@ def test():
             ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
             ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
-        # options
-        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        run_metadata = tf.RunMetadata()
+        # test progressively saved models
+        if FLAGS.progress:
+            mfiles = helper.listdir_files(FLAGS.train_dir, recursive=False,
+                                          filter_ext=['.index'],
+                                          encoding=None)
+            mfiles = [f[:-6] for f in mfiles if 'model_' in f]
+            mfiles.sort()
+            stats = []
+        else:
+            mfiles = []
         
-        # run session
-        ret = ret_loss + ret_pngs
-        sum_loss = [0 for _ in range(len(ret_loss))]
-        for step in range(max_steps):
-            '''
-            if step % 20 == 0:
-                cur_ret = sess.run(ret, options=run_options, run_metadata=run_metadata)
-                # Create the Timeline object, and write it to a json
-                tl = timeline.Timeline(run_metadata.step_stats)
-                ctf = tl.generate_chrome_trace_format()
-                with open(os.path.join(FLAGS.test_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
-                    f.write(ctf)
-            else:
+        for model_file in mfiles:
+            # restore variables from saved model
+            tf.train.Saver().restore(sess, model_file)
+            
+            # run session
+            sum_loss = [0 for _ in range(len(ret_loss))]
+            for step in range(max_steps):
+                cur_loss = sess.run(ret_loss)
+                # monitor losses
+                for _ in range(len(ret_loss)):
+                    sum_loss[_] += cur_loss[_]
+            
+            # summary
+            mean_loss = [l / max_steps for l in sum_loss]
+            
+            # save stats
+            if FLAGS.progress:
+                model_num = os.path.split(model_file)[1][6:]
+                stats.append(np.array([float(model_num)] + mean_loss))
+        
+        # test latest checkpoint
+        if True:
+            # restore variables from latest checkpoint
+            model_file = tf.train.latest_checkpoint(FLAGS.train_dir)
+            tf.train.Saver().restore(sess, model_file)
+            
+            # run session
+            ret = ret_loss + ret_pngs
+            sum_loss = [0 for _ in range(len(ret_loss))]
+            for step in range(max_steps):
                 cur_ret = sess.run(ret)
-            '''
-            cur_ret = sess.run(ret)
-            cur_loss = cur_ret[0:len(ret_loss)]
-            cur_pngs = cur_ret[len(ret_loss):]
-            # monitor losses
-            for _ in range(len(ret_loss)):
-                sum_loss[_] += cur_loss[_]
-            print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-                   step, *cur_loss))
-            # images output
-            _start = step * FLAGS.batch_size
-            _stop = _start + FLAGS.batch_size
-            _range = range(_start, _stop)
-            ofiles = []
-            ofiles.extend([os.path.join(FLAGS.test_dir,
-                '{:0>5}.0.LR.png'.format(_)) for _ in _range])
-            ofiles.extend([os.path.join(FLAGS.test_dir,
-                '{:0>5}.1.HR.png'.format(_)) for _ in _range])
-            ofiles.extend([os.path.join(FLAGS.test_dir,
-                '{:0>5}.2.SR{}.png'.format(_, FLAGS.postfix)) for _ in _range])
-            ofiles.extend([os.path.join(FLAGS.test_dir,
-                '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
-            helper.WriteFiles(cur_pngs, ofiles)
-        sess.close()
+                cur_loss = cur_ret[0:len(ret_loss)]
+                cur_pngs = cur_ret[len(ret_loss):]
+                # monitor losses
+                for _ in range(len(ret_loss)):
+                    sum_loss[_] += cur_loss[_]
+                #print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+                #       step, *cur_loss))
+                # images output
+                _start = step * FLAGS.batch_size
+                _stop = _start + FLAGS.batch_size
+                _range = range(_start, _stop)
+                ofiles = []
+                ofiles.extend([os.path.join(FLAGS.test_dir,
+                    '{:0>5}.0.LR.png'.format(_)) for _ in _range])
+                ofiles.extend([os.path.join(FLAGS.test_dir,
+                    '{:0>5}.1.HR.png'.format(_)) for _ in _range])
+                ofiles.extend([os.path.join(FLAGS.test_dir,
+                    '{:0>5}.2.SR{}.png'.format(_, FLAGS.postfix)) for _ in _range])
+                ofiles.extend([os.path.join(FLAGS.test_dir,
+                    '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
+                helper.WriteFiles(cur_pngs, ofiles)
+            
+            # summary
+            print('No.{}'.format(FLAGS.postfix))
+            mean_loss = [l / max_steps for l in sum_loss]
+            psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
+            print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+                   psnr, *mean_loss[1:]))
         
-        # summary
-        mean_loss = [l / max_steps for l in sum_loss]
-        psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-        print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-               psnr, *mean_loss[1:]))
+        sess.close()
+    
+    # save stats
+    import matplotlib.pyplot as plt
+    if FLAGS.progress:
+        stats = np.stack(stats)
+        np.save(os.path.join(FLAGS.test_dir, 'stats.npy'), stats)
+        fig, ax = plt.subplots()
+        ax.set_title('Test Error with Training Progress')
+        ax.set_xlabel('training steps')
+        ax.set_ylabel('mean absolute difference')
+        ax.set_xscale('linear')
+        ax.set_yscale('log')
+        ax.plot(stats[:, 0], stats[:, 2])
+        ax.axis(ymin=0)
+        plt.tight_layout()
+        plt.savefig(os.path.join(FLAGS.test_dir, 'stats.png'))
+        plt.close()
+    
+    print('')
 
 # main
 def main(argv=None):

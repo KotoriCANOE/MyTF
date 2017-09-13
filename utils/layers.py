@@ -97,6 +97,13 @@ def conv2d_variable(name, shape, initializer, init_factor=None, trainable=True, 
         tf.add_to_collection(collection, var)
     return var
 
+def apply_batch_norm(last, decay=0.999, is_training=False, data_format='NHWC'):
+    if decay:
+        return tf.contrib.layers.batch_norm(last, decay=decay, fused=True,
+                                            is_training=is_training, data_format=data_format)
+    else:
+        return last
+
 def apply_activation(last, activation, data_format='NHWC'):
     if isinstance(activation, str):
         activation = activation.lower()
@@ -142,9 +149,7 @@ def conv2d(last, ksize, out_channels,
                           tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -171,9 +176,7 @@ def depthwise_conv2d(last, ksize, channel_multiplier=1,
                           tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -205,9 +208,7 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
                           tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -256,9 +257,7 @@ def resize_conv2d(last, ksize, out_channels,
                           tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -302,9 +301,7 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
                           tf.constant_initializer(0.0), is_training)
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -374,9 +371,7 @@ def subpixel_conv2d(last, ksize, out_channels,
     # periodic shuffling
     last = periodic_shuffling(last, scaling, data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -406,9 +401,7 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
     # periodic shuffling
     last = periodic_shuffling(last, scaling, data_format)
     # batch normalization
-    if batch_norm:
-        last = tf.contrib.layers.batch_norm(last, decay=batch_norm, fused=True,
-                                            is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last

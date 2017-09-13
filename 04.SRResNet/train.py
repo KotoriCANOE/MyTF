@@ -23,21 +23,23 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_string('pretrain_dir', '',
                            """Directory where to load pre-trained model.""")
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Train',
+                           """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
-tf.app.flags.DEFINE_integer('save_steps', 20000,
+tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
 tf.app.flags.DEFINE_integer('timeline_steps', 0,
                             """Number of steps to save timeline.""")
-tf.app.flags.DEFINE_integer('threads', 8,
+tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
-tf.app.flags.DEFINE_integer('threads_py', 4,
+tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_integer('log_frequency', 100,
+tf.app.flags.DEFINE_integer('log_frequency', 500,
                             """Log frequency.""")
 tf.app.flags.DEFINE_integer('patch_height', 96,
                             """Block size y.""")
@@ -45,7 +47,7 @@ tf.app.flags.DEFINE_integer('patch_width', 96,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
-tf.app.flags.DEFINE_integer('buffer_size', 8192,
+tf.app.flags.DEFINE_integer('buffer_size', 65536, #8192,
                             """Buffer size for random shuffle.""")
 tf.app.flags.DEFINE_boolean('pre_down', False,
                             """Pre-downscale large image for (probably) higher quality data.""")
@@ -57,9 +59,6 @@ tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
-
-# constants
-TRAINSET_PATH = r'..\Dataset.SR\Train'
 
 # helper class
 class LoggerHook(tf.train.SessionRunHook):
@@ -96,7 +95,7 @@ class LoggerHook(tf.train.SessionRunHook):
 # training
 def train():
     import random
-    files = helper.listdir_files(TRAINSET_PATH,
+    files = helper.listdir_files(FLAGS.dataset,
                                  filter_ext=['.jpeg', '.jpg', '.png'],
                                  encoding=True)
     random.shuffle(files)

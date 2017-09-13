@@ -70,8 +70,7 @@ def inputs(config, files, labels_file, epoch_size=None, is_training=False, is_te
                           [file, label], [tf.float32, tf.float32])),
                           num_threads=1 if is_testing else threads, output_buffer_size=threads * 64)
     dataset = dataset.batch(batch_size)
-    if is_training: dataset = dataset.repeat(num_epochs)
-    else: dataset = dataset.repeat()
+    dataset = dataset.repeat(num_epochs if is_training else None)
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()

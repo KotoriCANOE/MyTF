@@ -215,14 +215,15 @@ def test():
     if FLAGS.progress:
         stats = np.stack(stats)
         np.save(os.path.join(FLAGS.test_dir, 'stats.npy'), stats)
-        plt.figure()
-        plt.title('Test Error with Training Progress')
-        plt.xlabel('training iterations')
-        plt.ylabel('mean absolute difference')
-        plt.plot(stats[:, 0], stats[:, 2])
-        axis = list(plt.axis())
-        axis[2] = 0
-        plt.axis(axis)
+        fig, ax = plt.subplots()
+        ax.set_title('Test Error with Training Progress')
+        ax.set_xlabel('training steps')
+        ax.set_ylabel('mean absolute difference')
+        ax.set_xscale('linear')
+        ax.set_yscale('log')
+        ax.plot(stats[:, 0], stats[:, 2])
+        ax.axis(ymin=0)
+        plt.tight_layout()
         plt.savefig(os.path.join(FLAGS.test_dir, 'stats.png'))
         plt.close()
     

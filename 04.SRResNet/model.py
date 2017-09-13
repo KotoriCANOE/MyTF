@@ -49,7 +49,7 @@ tf.app.flags.DEFINE_float('weight_decay', 2e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_min', 1e-5,
+tf.app.flags.DEFINE_float('lr_min', 4e-5,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 500,
                             """Steps after which learning rate decays""")
@@ -146,7 +146,7 @@ class SRmodel(object):
             with tf.variable_scope('conv{}'.format(l)) as scope:
                 last = layers.conv2d(last, ksize=self.k_first, out_channels=channels,
                     stride=1, padding='SAME', data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=activation,
+                    batch_norm=None, is_training=is_training, activation=None,
                     initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             skip1 = last
@@ -157,33 +157,45 @@ class SRmodel(object):
                 rb += 1
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                                                   data_format=data_format)
                     last = layers.conv2d(last, ksize=3, out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=batch_norm, is_training=is_training, activation=activation,
+                        batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                                                   data_format=data_format)
                     last = layers.conv2d(last, ksize=3, out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=batch_norm, is_training=is_training, activation=None,
+                        batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
                     last = tf.add(last, skip2)
                     skip2 = last
-                    last = layers.apply_activation(last, activation=activation,
-                                                   data_format=data_format)
             # skip connection
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
+                last = layers.apply_batch_norm(last, decay=batch_norm,
+                    is_training=is_training, data_format=data_format)
+                last = layers.apply_activation(last, activation=activation,
+                                               data_format=data_format)
                 last = layers.conv2d(last, ksize=3, out_channels=channels,
                     stride=1, padding='SAME', data_format=data_format,
-                    batch_norm=batch_norm, is_training=is_training, activation=None,
+                    batch_norm=None, is_training=is_training, activation=None,
                     initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
                 last = tf.add(last, skip1)
+                last = layers.apply_batch_norm(last, decay=batch_norm,
+                    is_training=is_training, data_format=data_format)
                 last = layers.apply_activation(last, activation=activation,
                                                data_format=data_format)
             # resize conv layer

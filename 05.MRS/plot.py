@@ -19,7 +19,7 @@ def plot1(postfix, labels=None, name=None):
     fig, ax = plt.subplots()
     
     ax.set_title('Test Error with Training Progress')
-    ax.set_xlabel('training iterations')
+    ax.set_xlabel('training steps')
     ax.set_ylabel('mean absolute difference (log scale)')
     ax.set_xscale('linear')
     ax.set_yscale('log')

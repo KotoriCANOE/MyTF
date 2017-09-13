@@ -396,7 +396,7 @@ def inputs(config, files, is_training=False, is_testing=False):
     dataset = dataset.map(parse3_func, num_threads=1 if is_testing else threads,
                           output_buffer_size=threads * 64)
     dataset = dataset.batch(batch_size)
-    if is_training and num_epochs > 0: dataset = dataset.repeat(num_epochs)
+    dataset = dataset.repeat(num_epochs if is_training else None)
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()
