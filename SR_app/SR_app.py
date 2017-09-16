@@ -1,5 +1,6 @@
 import os
 import time
+import queue
 import threading
 import numpy as np
 import tensorflow as tf
@@ -31,6 +32,10 @@ tf.app.flags.DEFINE_integer('patch_width', 360,
                             """Max patch width.""")
 tf.app.flags.DEFINE_integer('patch_pad', 8,
                             """Padding around patches.""")
+tf.app.flags.DEFINE_integer('threads', 0,
+                            """Concurrent multi-threading Python execution.""")
+tf.app.flags.DEFINE_integer('sess_threads', 1,
+                            """Maximum number of concurrent running TensorFlow sessions.""")
 
 # stderr print
 def eprint(*args, **kwargs):
@@ -80,8 +85,9 @@ class SRFilter:
             output = self.sess.run(self.output, feed_dict)
         return output
     
-    def process(self, src, max_patch_height=360, max_patch_width=360, patch_pad=8, data_format='NHWC', silent=True):
+    def process(self, src, max_patch_height=360, max_patch_width=360, patch_pad=8, data_format='NHWC', msg=None):
         assert isinstance(src, np.ndarray)
+        if msg is True: msg = ''
         # shape standardization
         src_shape = src.shape
         if len(src_shape) == 2:
@@ -125,8 +131,6 @@ class SRFilter:
             return pad, split, patch
         pad_h, split_h, patch_h = pad_split_patch(height, max_patch_height, patch_pad)
         pad_w, split_w, patch_w = pad_split_patch(width, max_patch_width, patch_pad)
-        #if not silent: eprint(height, pad_h, split_h, patch_h)
-        #if not silent: eprint(width, pad_w, split_w, patch_w)
         # padding
         need_padding = pad_h > 0 or pad_w > 0
         pad_h = (patch_pad, pad_h - patch_pad)
@@ -141,8 +145,9 @@ class SRFilter:
             p_w = (s % split_w) * (patch_w - patch_pad * 2)
             src_patches.append(src[:, :, p_h : p_h + patch_h, p_w : p_w + patch_w])
         # inference
-        if not silent: eprint('Inferencing using model...')
-        _t = time.time()
+        if msg or msg == '':
+            eprint(msg + 'Inferencing using model...')
+            _t = time.time()
         dst_patches = []
         for src_p in src_patches:
             if self.data_format != 'NCHW':
@@ -151,8 +156,9 @@ class SRFilter:
             if self.data_format != 'NCHW':
                 dst_p = dst_p.transpose((0, 3, 1, 2))
             dst_patches.append(dst_p)
-        _d = time.time() - _t
-        if not silent: eprint('Inferencing finished. Duration: {} seconds.'.format(_d))
+        if msg or msg == '':
+            _d = time.time() - _t
+            eprint(msg + 'Inferencing finished. Duration: {} seconds.'.format(_d))
         # cropping
         for s in range(splits):
             crop_t = (pad_h[0] if s // split_w == 0 else patch_pad) * self.scaling
@@ -220,46 +226,80 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
 def main(argv=None):
     from skimage import io
     from skimage import transform
+    
     extensions = ['.jpeg', '.jpg', '.png', '.bmp', '.webp', '.tif', '.tiff', '.jp2']
     dst_postfix = FLAGS.dst_postfix + '.png'
     channel_index = -1
+    # nunber of threads
+    if FLAGS.threads <= 0:
+        thread_num = max(1, os.cpu_count() - FLAGS.threads)
+    else:
+        thread_num = FLAGS.threads
     # directories and files
     make_dirs(FLAGS.dst_dir)
     src_files = listdir_files(FLAGS.src_dir, FLAGS.recursive, extensions)
     # initialization
-    filter = SRFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.scaling)
-    # read, process and save image files
-    for (file_path, dir_path, file_name) in src_files:
-        # read
-        src = io.imread(file_path)
-        print('Loaded {}'.format(file_path))
-        # separate alpha channel
-        channels = src.shape[channel_index]
-        if channels == 2 or channels == 4:
-            alpha = src[:, :, -1:]
-            src = src[:, :, :-1]
-        # process
-        dst = filter.process(src, max_patch_height=FLAGS.patch_height, max_patch_width=FLAGS.patch_width,
-                             patch_pad=FLAGS.patch_pad, data_format='NHWC', silent=False)
-        # process and merge alpha channel
-        if channels == 2 or channels == 4:
-            dtype = alpha.dtype
-            bits = dtype.itemsize * 8
-            alpha = transform.rescale(alpha, FLAGS.scaling, mode='edge', preserve_range=True)
-            if bits < 32:
-                alpha = np.clip(alpha, 0, (1 << bits) - 1)
-                alpha = alpha.astype(dtype)
+    filter = SRFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.scaling, FLAGS.sess_threads)
+    # worker - read, process and save image files
+    def worker(q, t):
+        msg = '{}: '.format(t) if thread_num > 1 else ''
+        while True:
+            # dequeue
+            item = q.get()
+            if item is None:
+                break
             else:
-                alpha = np.clip(alpha, 0, 1)
-            dst = np.concatenate([dst, alpha], axis=channel_index)
-        # save
-        save_dir = dir_path[len(FLAGS.src_dir):].strip('/').strip('\\')
-        save_dir = os.path.join(FLAGS.dst_dir, save_dir)
-        make_dirs(save_dir)
-        save_file = os.path.join(save_dir, file_name + dst_postfix)
-        print('Saving file...'.format(save_file))
-        io.imsave(save_file, dst)
-        print('Result saved to {}'.format(save_file))
+                file_path, dir_path, file_name = item
+            # read
+            src = io.imread(file_path)
+            print(msg + 'Loaded {}'.format(file_path))
+            # separate alpha channel
+            channels = src.shape[channel_index]
+            if channels == 2 or channels == 4:
+                alpha = src[:, :, -1:]
+                src = src[:, :, :-1]
+            # process
+            dst = filter.process(src, max_patch_height=FLAGS.patch_height, max_patch_width=FLAGS.patch_width,
+                                 patch_pad=FLAGS.patch_pad, data_format='NHWC', msg=None)
+            # process and merge alpha channel
+            if channels == 2 or channels == 4:
+                dtype = alpha.dtype
+                bits = dtype.itemsize * 8
+                alpha = transform.rescale(alpha, FLAGS.scaling, mode='edge', preserve_range=True)
+                if bits < 32:
+                    alpha = np.clip(alpha, 0, (1 << bits) - 1)
+                    alpha = alpha.astype(dtype)
+                else:
+                    alpha = np.clip(alpha, 0, 1)
+                dst = np.concatenate([dst, alpha], axis=channel_index)
+            # save
+            save_dir = dir_path[len(FLAGS.src_dir):].strip('/').strip('\\')
+            save_dir = os.path.join(FLAGS.dst_dir, save_dir)
+            make_dirs(save_dir)
+            save_file = os.path.join(save_dir, file_name + dst_postfix)
+            print(msg + 'Saving... {}'.format(save_file))
+            io.imsave(save_file, dst)
+            print(msg + 'Result saved to {}'.format(save_file))
+            # indicate enqueued task is complete
+            q.task_done()
+    # enqueue
+    q = queue.Queue()
+    for item in src_files:
+        q.put(item)
+    # start threads
+    threads = []
+    for _ in range(thread_num):
+        t = threading.Thread(target=lambda: worker(q, _))
+        t.start()
+        threads.append(t)
+    # block until all tasks are done
+    q.join()
+    # stop workers
+    for i in range(thread_num):
+        q.put(None)
+    for t in threads:
+        t.join()
 
+# tf main
 if __name__ == '__main__':
     tf.app.run()
