@@ -29,7 +29,7 @@ tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
 tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
-tf.app.flags.DEFINE_integer('timeline_steps', 0,
+tf.app.flags.DEFINE_integer('timeline_steps', 911,
                             """Number of steps to save timeline.""")
 tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
@@ -124,7 +124,7 @@ def train():
         g_train_op = model.train(global_step)
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_vars, max_to_keep=1 << 16,
+        saver = tf.train.Saver(var_list=model.g_mvars, max_to_keep=1 << 16,
                                save_relative_paths=True)
         
         # save the graph
@@ -158,7 +158,7 @@ def train():
             # run session
             while not mon_sess.should_stop():
                 step = tf.train.global_step(sess, global_step)
-                if FLAGS.timeline_steps > 0 and step % FLAGS.timeline_steps == 0:
+                if FLAGS.timeline_steps > 0 and step // FLAGS.timeline_steps < 10 and step % FLAGS.timeline_steps == 0:
                     run_sess(run_options, run_metadata)
                     # Create the Timeline object, and write it to a json
                     tl = timeline.Timeline(run_metadata.step_stats)

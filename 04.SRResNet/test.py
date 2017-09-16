@@ -2,7 +2,6 @@ import sys
 import os
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.client import timeline
 sys.path.append('..')
 from utils import helper
 import utils.image
@@ -109,6 +108,9 @@ def test():
         
         model.build_model(images_lr)
         
+        # a saver object which will save all the variables
+        saver = tf.train.Saver(var_list=model.g_mvars)
+        
         # get output
         images_sr = tf.get_default_graph().get_tensor_by_name('Output:0')
         
@@ -136,6 +138,9 @@ def test():
             ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
             ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
+        # initialize global variables
+        #sess.run(tf.global_variables_initializer())
+        
         # test progressively saved models
         if FLAGS.progress:
             mfiles = helper.listdir_files(FLAGS.train_dir, recursive=False,
@@ -149,7 +154,7 @@ def test():
         
         for model_file in mfiles:
             # restore variables from saved model
-            tf.train.Saver().restore(sess, model_file)
+            saver.restore(sess, model_file)
             
             # run session
             sum_loss = [0 for _ in range(len(ret_loss))]
@@ -170,8 +175,9 @@ def test():
         # test latest checkpoint
         if True:
             # restore variables from latest checkpoint
+            #model_file = os.path.join(FLAGS.train_dir, 'model_0140000')
             model_file = tf.train.latest_checkpoint(FLAGS.train_dir)
-            tf.train.Saver().restore(sess, model_file)
+            saver.restore(sess, model_file)
             
             # run session
             ret = ret_loss + ret_pngs
@@ -220,6 +226,7 @@ def test():
         ax.set_ylabel('mean absolute difference')
         ax.set_xscale('linear')
         ax.set_yscale('log')
+        stats = stats[1:]
         ax.plot(stats[:, 0], stats[:, 2])
         ax.axis(ymin=0)
         plt.tight_layout()
