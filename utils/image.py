@@ -22,14 +22,13 @@ def RGB2Y(images, data_format='NHWC', scope=None):
         if data_format == 'NCHW':
             last = NCHW2NHWC(last)
         shape = tf.shape(last)
-        with tf.control_dependencies([tf.assert_equal(shape[-1], 3)]):
-            last = tf.reshape(last, [tf.reduce_prod(shape[:-1]), 3])
-            last = tf.matmul(last, t, transpose_b=True)
-            if data_format == 'NCHW':
-                shape = [shape[0], 1, shape[1], shape[2]]
-            else:
-                shape = [shape[0], shape[1], shape[2], 1]
-            last = tf.reshape(last, shape)
+        last = tf.reshape(last, [tf.reduce_prod(shape[:-1]), 3])
+        last = tf.matmul(last, t, transpose_b=True)
+        if data_format == 'NCHW':
+            shape = [shape[0], 1, shape[1], shape[2]]
+        else:
+            shape = [shape[0], shape[1], shape[2], 1]
+        last = tf.reshape(last, shape)
     return last
 
 RGB2OPP_count = 0
@@ -55,10 +54,9 @@ def RGB2OPP(images, norm=False, data_format='NHWC', scope=None):
         if data_format == 'NCHW':
             last = NCHW2NHWC(last)
         shape = tf.shape(last)
-        with tf.control_dependencies([tf.assert_equal(shape[-1], 3)]):
-            last = tf.reshape(last, [tf.reduce_prod(shape[:-1]), 3])
-            last = tf.matmul(last, t, transpose_b=True)
-            last = tf.reshape(last, shape)
+        last = tf.reshape(last, [tf.reduce_prod(shape[:-1]), 3])
+        last = tf.matmul(last, t, transpose_b=True)
+        last = tf.reshape(last, shape)
         if data_format == 'NCHW':
             last = NHWC2NCHW(last)
     return last
@@ -86,10 +84,9 @@ def OPP2RGB(images, norm=False, data_format='NHWC', scope=None):
         if data_format == 'NCHW':
             last = NCHW2NHWC(last)
         shape = tf.shape(last)
-        with tf.control_dependencies([tf.assert_equal(shape[-1], 3)]):
-            last = tf.reshape(last, [tf.reduce_prod(shape[:-1]), 3])
-            last = tf.matmul(last, t, transpose_b=True)
-            last = tf.reshape(last, shape)
+        last = tf.reshape(last, [tf.reduce_prod(shape[:-1]), 3])
+        last = tf.matmul(last, t, transpose_b=True)
+        last = tf.reshape(last, shape)
         if data_format == 'NCHW':
             last = NHWC2NCHW(last)
     return last

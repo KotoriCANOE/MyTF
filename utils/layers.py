@@ -37,7 +37,7 @@ def loss_summaries(losses, decay=0):
             tf.summary.scalar(l.op.name, loss_averages.average(l))
     return loss_averages_op
 
-def get_variable(name, shape, initializer, trainable=True):
+def get_variable(name, shape, initializer, collection=None, trainable=True):
     """Helper to create a Variable stored on CPU memory.
     Args:
       name: name of the variable
@@ -46,14 +46,15 @@ def get_variable(name, shape, initializer, trainable=True):
     Returns:
       Variable Tensor
     """
-    dtype = tf.float32
-    with tf.device('/cpu:0'):
-        var = tf.get_variable(name, shape, dtype=dtype,
-                              initializer=initializer,
-                              trainable=trainable)
+    var = tf.get_variable(name, shape, dtype=tf.float32,
+                          initializer=initializer,
+                          trainable=trainable)
+    # Add variable to collection
+    if collection:
+        tf.add_to_collection(collection, var)
     return var
 
-def conv2d_variable(name, shape, initializer, init_factor=None, trainable=True, wd=None, collection=None):
+def conv2d_variable(name, shape, initializer, init_factor=None, wd=None, collection=None, trainable=True):
     """Helper to create an initialized Variable with weight decay.
     Note that the Variable is initialized with a truncated normal distribution.
     A weight decay is added only if one is specified.
@@ -70,39 +71,48 @@ def conv2d_variable(name, shape, initializer, init_factor=None, trainable=True, 
     shape = helper.dim2int(shape)
     # weights initializer
     if init_factor is None:
-        init_factor = 1.0 if initializer == 4 else 2.0
+        init_factor = 2.0 if initializer == 4 else 1.0
     if initializer == 1: # uniform Xavier initializer
-        initializer = tf.contrib.layers.variance_scaling_initializer(
-            factor=init_factor, mode='FAN_AVG', uniform=True)
+        initializer = tf.variance_scaling_initializer(
+            scale=init_factor, mode='fan_avg', distribution='uniform')
     elif initializer == 2: # normal Xavier initializer
-        initializer = tf.contrib.layers.variance_scaling_initializer(
-            factor=init_factor, mode='FAN_AVG', uniform=False)
+        initializer = tf.variance_scaling_initializer(
+            scale=init_factor, mode='fan_avg', distribution='normal')
     elif initializer == 3: # Convolutional Architecture for Fast Feature Embedding
-        initializer = tf.contrib.layers.variance_scaling_initializer(
-            factor=init_factor, mode='FAN_IN', uniform=True)
+        initializer = tf.variance_scaling_initializer(
+            scale=init_factor, mode='fan_in', distribution='uniform')
     elif initializer == 4: # Delving Deep into Rectifiers, init_factor should be 2.0 for ReLU
-        initializer = tf.contrib.layers.variance_scaling_initializer(
-            factor=init_factor, mode='FAN_IN', uniform=False)
+        initializer = tf.variance_scaling_initializer(
+            scale=init_factor, mode='fan_in', distribution='normal')
     elif initializer >= 5: # modified Xavier initializer
         stddev = np.sqrt(init_factor / (np.sqrt(shape[2] * shape[3]) * shape[0] * shape[1]))
         initializer = tf.truncated_normal_initializer(stddev=stddev, dtype=dtype)
     # weights initialization
-    var = get_variable(name, shape, initializer, trainable)
+    var = get_variable(name, shape, initializer, collection, trainable)
     # L2 regularization (weight decay)
     if wd is not None and wd != 0:
         regularizer = tf.contrib.layers.l2_regularizer(wd)
         regularizer(var)
-    # Add weights to collection
-    if collection:
-        tf.add_to_collection(collection, var)
     return var
 
-def apply_batch_norm(last, decay=0.999, is_training=False, data_format='NHWC'):
+def apply_batch_norm(last, decay=0.999, is_training=False, data_format='NHWC',
+                     collection=None):
     if decay:
-        return tf.contrib.layers.batch_norm(last, decay=decay, fused=True,
-                                            is_training=is_training, data_format=data_format)
+        return tf.contrib.layers.batch_norm(last, decay=decay, center=True, scale=True,
+            fused=True, is_training=is_training, variables_collections=collection,
+            data_format=data_format)
     else:
         return last
+
+def PReLU(last, data_format='NHWC'):
+    shape = last.get_shape()
+    shape = shape[-3] if data_format == 'NCHW' else shape[-1]
+    shape = [shape, 1, 1]
+    alpha = get_variable('alpha', shape, tf.zeros_initializer())
+    if data_format != 'NCHW':
+        alpha = tf.squeeze(alpha, axis=[-2, -1])
+        #alpha = tf.expand_dims(tf.expand_dims(alpha, -1), -1)
+    return tf.maximum(0.0, last) + alpha * tf.minimum(0.0, last)
 
 def apply_activation(last, activation, data_format='NHWC'):
     if isinstance(activation, str):
@@ -111,12 +121,7 @@ def apply_activation(last, activation, data_format='NHWC'):
         if activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':
-            if data_format != 'NCHW':
-                last = tf.transpose(last, (0, 3, 1, 2))
-            prelu = tf.contrib.keras.layers.PReLU(shared_axes=[2, 3])
-            last = prelu(last)
-            if data_format != 'NCHW':
-                last = tf.transpose(last, (0, 2, 3, 1))
+            last = PReLU(last, data_format)
         elif activation[0:5] == 'lrelu':
             alpha = activation[5:]
             if alpha: alpha = float(alpha)
@@ -142,14 +147,14 @@ def conv2d(last, ksize, out_channels,
     kshape = [ksize[0], ksize[1], in_channels, out_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              initializer=initializer, init_factor=init_factor,
-                             trainable=is_training, wd=wd, collection=collection)
+                             wd=wd, collection=collection)
     last = tf.nn.conv2d(last, kernel, strides=stride,
                         padding=padding, data_format=data_format)
-    biases = get_variable('biases', [out_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -169,14 +174,14 @@ def depthwise_conv2d(last, ksize, channel_multiplier=1,
     depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
     depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
                                        initializer=initializer, init_factor=init_factor,
-                                       trainable=is_training, wd=wd, collection=collection)
+                                       wd=wd, collection=collection)
     last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=stride,
                                          padding=padding, data_format=data_format)
-    biases = get_variable('biases', [out_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -198,17 +203,17 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
     pointwise_kshape = [1, 1, temp_channels, out_channels]
     depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
                                        initializer=initializer, init_factor=init_factor,
-                                       trainable=is_training, wd=wd, collection=collection)
+                                       wd=wd, collection=collection)
     pointwise_kernel = conv2d_variable('pointwise_weights', shape=pointwise_kshape,
                                        initializer=initializer, init_factor=init_factor,
-                                       trainable=is_training, wd=wd, collection=collection)
+                                       wd=wd, collection=collection)
     last = tf.nn.separable_conv2d(last, depthwise_kernel, pointwise_kernel, strides=stride,
                                   padding=padding, data_format=data_format)
-    biases = get_variable('biases', [out_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -243,21 +248,21 @@ def resize_conv2d(last, ksize, out_channels,
     kshape = [ksize[0], ksize[1], in_channels, out_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              initializer=initializer, init_factor=init_factor,
-                             trainable=is_training, wd=wd, collection=collection)
+                             wd=wd, collection=collection)
     last = tf.nn.conv2d(last, kernel, strides=[1, 1, 1, 1],
                         padding='SAME', data_format=data_format)
     '''
     kshape = [ksize[0], ksize[1], out_channels, in_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              initializer=initializer, init_factor=init_factor,
-                             trainable=is_training, wd=wd, collection=collection)
+                             wd=wd, collection=collection)
     last = tf.nn.conv2d_transpose(last, kernel, out_shape, strides=[1, 1, 1, 1],
                                   padding='SAME', data_format=data_format)
-    biases = get_variable('biases', [out_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -290,18 +295,18 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
     depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
     depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
                                        initializer=initializer, init_factor=init_factor,
-                                       trainable=is_training, wd=wd, collection=collection)
+                                       wd=wd, collection=collection)
     '''
     last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=[1, 1, 1, 1],
                                          padding='SAME', data_format=data_format)
     '''
     last = tf.nn.depthwise_conv2d_native_backprop_input(out_shape, depthwise_kernel, last,
             strides=[1, 1, 1, 1], padding='SAME', data_format=data_format)
-    biases = get_variable('biases', [out_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -362,16 +367,16 @@ def subpixel_conv2d(last, ksize, out_channels,
     kshape = [ksize[0], ksize[1], in_channels, temp_channels]
     kernel = conv2d_variable('weights', shape=kshape,
                              initializer=initializer, init_factor=init_factor,
-                             trainable=is_training, wd=wd, collection=collection)
+                             wd=wd, collection=collection)
     last = tf.nn.conv2d(last, kernel, strides=[1, 1, 1, 1],
                         padding=padding, data_format=data_format)
-    biases = get_variable('biases', [temp_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [temp_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # periodic shuffling
     last = periodic_shuffling(last, scaling, data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
@@ -392,16 +397,16 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
     depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
     depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
                                        initializer=initializer, init_factor=init_factor,
-                                       trainable=is_training, wd=wd, collection=collection)
+                                       wd=wd, collection=collection)
     last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=[1, 1, 1, 1],
                                          padding=padding, data_format=data_format)
-    biases = get_variable('biases', [out_channels],
-                          tf.constant_initializer(0.0), is_training)
+    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
     # periodic shuffling
     last = periodic_shuffling(last, scaling, data_format)
     # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training, data_format=data_format)
+    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
+        data_format=data_format)
     # activation function
     last = apply_activation(last, activation, data_format)
     return last
