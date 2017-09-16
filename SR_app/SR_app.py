@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import numpy as np
 import tensorflow as tf
 
@@ -38,47 +39,46 @@ def eprint(*args, **kwargs):
 
 # API
 class SRFilter:
-    def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2):
+    def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2, sess_threads=1):
         # arXiv 1509.09308
         # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
         os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
         
         self.data_format = data_format
         self.scaling = scaling
+        self._create_graph()
         self._create_session()
         self._restore_graph(model_dir)
+        self.semaphore = threading.Semaphore(value=sess_threads)
+    
+    def _create_graph(self):
+        self.graph = tf.Graph()
     
     def _create_session(self):
-        config = tf.ConfigProto(log_device_placement=False)
-        config.gpu_options.allow_growth = True
-        self.sess = tf.Session(config=config)
+        gpu_options = tf.GPUOptions(allow_growth=True)
+        config = tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False)
+        self.sess = tf.Session(graph=self.graph, config=config)
     
     def _restore_graph(self, model_dir):
         # force load contrib ops
         # https://github.com/tensorflow/tensorflow/issues/10130
         dir(tf.contrib)
         # load meta graph and restore variables
-        saver = tf.train.import_meta_graph(os.path.join(model_dir, 'model.meta'))
-        if saver is None:
-            raise ValueError('Failed to import meta graph!')
-        saver.restore(self.sess, os.path.join(model_dir, 'model'))
+        with self.graph.as_default():
+            saver = tf.train.import_meta_graph(os.path.join(model_dir, 'model.meta'))
+            if saver is None:
+                raise ValueError('Failed to import meta graph!')
+            saver.restore(self.sess, os.path.join(model_dir, 'model'))
         # access placeholders variables
-        self.graph = tf.get_default_graph()
         self.input = self.graph.get_tensor_by_name('Input:0')
         self.output = self.graph.get_tensor_by_name('Output:0')
-        '''
-        # model
-        import SRResNet as model
-        self.input = tf.placeholder(tf.float32, (None, FLAGS.image_channels, None, None))
-        self.output = model.inference(self.input, is_training=False)
-        # restore variables
-        saver = tf.train.Saver()
-        saver.restore(sess, os.path.join(model_dir, 'model'))
-        '''
+        self.graph.finalize()
     
     def inference(self, input):
         feed_dict = {self.input: input}
-        return self.sess.run(self.output, feed_dict)
+        with self.semaphore:
+            output = self.sess.run(self.output, feed_dict)
+        return output
     
     def process(self, src, max_patch_height=360, max_patch_width=360, patch_pad=8, data_format='NHWC', silent=True):
         assert isinstance(src, np.ndarray)
