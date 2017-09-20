@@ -49,7 +49,14 @@ tf.app.flags.DEFINE_float('noise_corr', 0.75,
 tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
 
-# setup tensorflow
+# reset random seeds
+def reset_random(seed=0):
+    import random
+    tf.set_random_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+# setup tensorflow and return session
 def setup():
     # create session
     gpu_options = tf.GPUOptions(allow_growth=True)
@@ -58,14 +65,11 @@ def setup():
     sess = tf.Session(config=config)
 
     # initialize rng with a deterministic seed
-    import random
-    with sess.graph.as_default():
-        tf.set_random_seed(FLAGS.random_seed)
-    random.seed(FLAGS.random_seed)
-    np.random.seed(FLAGS.random_seed)
+    reset_random(FLAGS.random_seed)
 
-    summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)
-    return sess, summary_writer
+    #summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)
+    #return sess, summary_writer
+    return sess
 
 # losses
 def get_losses(ref, pred):
@@ -79,7 +83,7 @@ def get_losses(ref, pred):
     Y_ss_ssim = utils.image.SS_SSIM(Y_ref, Y_pred, data_format=FLAGS.data_format)
     Y_ms_ssim = utils.image.MS_SSIM2(Y_ref, Y_pred, norm=True, data_format=FLAGS.data_format)
     
-    #return each loss
+    # return each loss
     return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim
 
 # testing
@@ -93,9 +97,6 @@ def test():
     files = files[:epoch_size]
     
     with tf.Graph().as_default():
-        # setup global tensorflow state
-        sess, summary_writer = setup()
-        
         # pre-processing for input
         with tf.device('/cpu:0'):
             images_lr, images_hr = inputs(FLAGS, files, is_testing=True)
@@ -138,44 +139,9 @@ def test():
             ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
             ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
-        # initialize global variables
-        #sess.run(tf.global_variables_initializer())
-        
-        # test progressively saved models
-        if FLAGS.progress:
-            mfiles = helper.listdir_files(FLAGS.train_dir, recursive=False,
-                                          filter_ext=['.index'],
-                                          encoding=None)
-            mfiles = [f[:-6] for f in mfiles if 'model_' in f]
-            mfiles.sort()
-            stats = []
-        else:
-            mfiles = []
-        
-        for model_file in mfiles:
-            # restore variables from saved model
-            saver.restore(sess, model_file)
-            
-            # run session
-            sum_loss = [0 for _ in range(len(ret_loss))]
-            for step in range(max_steps):
-                cur_loss = sess.run(ret_loss)
-                # monitor losses
-                for _ in range(len(ret_loss)):
-                    sum_loss[_] += cur_loss[_]
-            
-            # summary
-            mean_loss = [l / max_steps for l in sum_loss]
-            
-            # save stats
-            if FLAGS.progress:
-                model_num = os.path.split(model_file)[1][6:]
-                stats.append(np.array([float(model_num)] + mean_loss))
-        
         # test latest checkpoint
-        if True:
+        with setup() as sess:
             # restore variables from latest checkpoint
-            #model_file = os.path.join(FLAGS.train_dir, 'model_0140000')
             model_file = tf.train.latest_checkpoint(FLAGS.train_dir)
             saver.restore(sess, model_file)
             
@@ -213,7 +179,37 @@ def test():
             print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
                    psnr, *mean_loss[1:]))
         
-        sess.close()
+        # test progressively saved models
+        if FLAGS.progress:
+            mfiles = helper.listdir_files(FLAGS.train_dir, recursive=False,
+                                          filter_ext=['.index'],
+                                          encoding=None)
+            mfiles = [f[:-6] for f in mfiles if 'model_' in f]
+            mfiles.sort()
+            stats = []
+        else:
+            mfiles = []
+        
+        for model_file in mfiles:
+            with setup() as sess:
+                # restore variables from saved model
+                saver.restore(sess, model_file)
+                
+                # run session
+                sum_loss = [0 for _ in range(len(ret_loss))]
+                for step in range(max_steps):
+                    cur_loss = sess.run(ret_loss)
+                    # monitor losses
+                    for _ in range(len(ret_loss)):
+                        sum_loss[_] += cur_loss[_]
+                
+                # summary
+                mean_loss = [l / max_steps for l in sum_loss]
+                
+                # save stats
+                if FLAGS.progress:
+                    model_num = os.path.split(model_file)[1][6:]
+                    stats.append(np.array([float(model_num)] + mean_loss))
     
     # save stats
     import matplotlib.pyplot as plt
@@ -223,7 +219,7 @@ def test():
         fig, ax = plt.subplots()
         ax.set_title('Test Error with Training Progress')
         ax.set_xlabel('training steps')
-        ax.set_ylabel('mean absolute difference')
+        ax.set_ylabel('MAD (RGB)')
         ax.set_xscale('linear')
         ax.set_yscale('log')
         stats = stats[1:]

@@ -37,21 +37,24 @@ def plot1(postfix, labels=None, name=None):
             y = stats[:, index]
             if xfunc: x = xfunc(x)
             if yfunc: y = yfunc(y)
-            x, y = smooth(x, y)
-            #ax.plot(x, y, label=labels[_])
-            ax.plot(x, y, label=labels[_], marker=MARKERS[_], markersize=4)
+            #x, y = smooth(x, y)
+            ax.plot(x, y, label=labels[_])
+            #ax.plot(x, y, label=labels[_], marker=MARKERS[_], markersize=4)
         
         #ax.axis(ymin=0)
         ax.legend(loc=legend)
         
         plt.tight_layout()
         plt.savefig(os.path.join(PATH, 'stats-{}.{}.png'.format(name if name else postfix, index)))
-        plt.close() 
+        plt.close()
     
     _plot(2, 'MAD (RGB)', yscale='log')
     _plot(4, 'MS-SSIM (Y)', legend=2)
 
 #plot1([120, 121, 122, 123], ['model=1 PReLU', 'model=2 PReLU', 'model=2 ReLU', 'model=3 ReLU'], '120')
-#plot1([122, 127, 128, 129, 130], ['(model=2 ReLU)', 'batch_norm(0.9)', 'batch_norm(0.99)', 'batch_norm(0.9968)', 'batch_norm(0.999)'], '122.batch_norm')
 plot1([122, 126, 132], ['(model=2 ReLU lr_min=4e-5)', 'init_activation=2.0', 'init_activation=2.0 lr_min=1e-6'], '122')
-plot1([132, 134, 133], ['(model=2 ReLU init_activation=2.0 lr_min=1e-6)', 'batch_norm(0.968)', 'batch_norm(0.99)'], '132')
+plot1([132, 134, 133, 135], ['batch_norm(0)', 'batch_norm(0.968)', 'batch_norm(0.99)', 'batch_norm(0.9968)'], '132')
+plot1([136, 138, 133, 139, 137], ['weight_decay=0', 'weight_decay=1e-6', 'weight_decay=2e-6', 'weight_decay=5e-6', 'weight_decay=1e-5'], '136')
+plot1([140, 141, 133], ['initializer=3', 'initializer=4', 'initializer=5'], '140')
+plot1([141, 142, 143, 144], ['ReLU', 'LReLU(0.3)', 'ELU', 'PReLU'], '141')
+plot1([146, 145, 141, 147, 148], ['lr=5e-3', 'lr=2e-3', 'lr=1e-3', 'lr=5e-4', 'lr=2e-4'], '146')

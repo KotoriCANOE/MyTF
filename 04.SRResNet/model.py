@@ -39,7 +39,7 @@ tf.app.flags.DEFINE_string('activation', 'prelu',
                             """Activation function used.""")
 
 # training parameters
-tf.app.flags.DEFINE_integer('initializer', 5,
+tf.app.flags.DEFINE_integer('initializer', 4,
                             """Weights initialization method.""")
 tf.app.flags.DEFINE_float('init_factor', 1.0,
                             """Weights initialization STD factor for conv layers without activation.""")
@@ -49,7 +49,7 @@ tf.app.flags.DEFINE_float('weight_decay', 2e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
-tf.app.flags.DEFINE_float('lr_min', 1e-6,
+tf.app.flags.DEFINE_float('lr_min', 0,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 500,
                             """Steps after which learning rate decays""")
@@ -70,7 +70,7 @@ tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
 
 # model
 class SRmodel(object):
-    def __init__(self, config, data_format='NCHW', input_range=1, output_range=1,
+    def __init__(self, config, data_format='NCHW', input_range=2, output_range=2,
                  multiGPU=False, use_fp16=False, scaling=2, image_channels=3,
                  input_height=None, input_width=None, batch_size=None):
         self.data_format = data_format
@@ -220,7 +220,7 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
         # return SR image
-        print('Totally {} convolutional layers.'.format(l))
+        print('Generator: totally {} convolutional layers.'.format(l))
         return last
     
     def generator_losses(self, ref, pred, alpha=0.10, weights1=1.0, weights2=1.0):
@@ -269,17 +269,17 @@ class SRmodel(object):
         # apply generator to inputs
         self.images_sr = self.generator(self.images_lr, is_training=is_training)
         
-        # trainable and model variables
-        t_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
-        m_vars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
-        self.g_tvars = t_vars
-        self.g_mvars = list(set(t_vars + m_vars))
-        
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:
             tf.multiply(self.images_sr + 1, 0.5, name='Output')
         else:
             tf.identity(self.images_sr, name='Output')
+        
+        # trainable and model variables
+        t_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
+        m_vars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
+        self.g_tvars = t_vars
+        self.g_mvars = list(set(t_vars + m_vars))
         
         # return generated results
         return self.images_sr
@@ -322,7 +322,8 @@ class SRmodel(object):
         if self.lr_decay_steps > 0 and self.lr_decay_factor != 1:
             g_lr = tf.train.exponential_decay(g_lr, global_step,
                 self.lr_decay_steps, self.lr_decay_factor, staircase=True)
-            g_lr = tf.maximum(self.lr_min, g_lr)
+            if self.lr_min > 0:
+                g_lr = tf.maximum(tf.constant(self.lr_min, dtype=self.dtype), g_lr)
         tf.summary.scalar('g_learning_rate', g_lr)
         
         # training ops
@@ -346,10 +347,8 @@ class SRmodel(object):
         for grad, var in g_grads_and_vars:
             if grad is not None:
                 tf.summary.histogram(var.op.name + '/gradients', grad)
-        
-        # add histograms for trainable variables
-        for var in tf.trainable_variables():
-            tf.summary.histogram(var.op.name, var)
+            if var is not None:
+                tf.summary.histogram(var.op.name, var)
         
         # track the moving averages of all trainable variables
         if self.train_moving_average > 0:

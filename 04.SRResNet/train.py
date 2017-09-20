@@ -47,7 +47,7 @@ tf.app.flags.DEFINE_integer('patch_width', 96,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
-tf.app.flags.DEFINE_integer('buffer_size', 65536, #8192,
+tf.app.flags.DEFINE_integer('buffer_size', 65536,
                             """Buffer size for random shuffle.""")
 tf.app.flags.DEFINE_boolean('pre_down', False,
                             """Pre-downscale large image for (probably) higher quality data.""")
@@ -88,7 +88,7 @@ class LoggerHook(tf.train.SessionRunHook):
             examples_per_sec = FLAGS.log_frequency * FLAGS.batch_size / duration
             sec_per_batch = float(duration / FLAGS.log_frequency)
 
-            format_str = '{}: epoch {}, step {}, loss = {:.5} ({:.0f} samples/sec; {:.3f} sec/batch)'
+            format_str = '{}: epoch {}, step {}, g_loss = {:.5} ({:.0f} samples/sec; {:.3f} sec/batch)'
             print(format_str.format(datetime.now(), self._epoch, self._step,
                                     loss, examples_per_sec, sec_per_batch))
 
