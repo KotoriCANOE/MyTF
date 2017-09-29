@@ -42,6 +42,8 @@ tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Batch size.""")
 tf.app.flags.DEFINE_boolean('pre_down', True,
                             """Pre-downscale large image for (probably) higher quality data.""")
+tf.app.flags.DEFINE_float('random_resizer', 0,
+                            """value for resizer choice, 0 for random resizer.""")
 tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,

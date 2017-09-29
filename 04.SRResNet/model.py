@@ -27,15 +27,15 @@ tf.app.flags.DEFINE_integer('k_first', 3,
                             """Kernel size for the first layer.""")
 tf.app.flags.DEFINE_integer('k_last', 3,
                             """Kernel size for the last layer.""")
-tf.app.flags.DEFINE_integer('res_blocks', 8,
-                            """Number of residual blocks.""")
-tf.app.flags.DEFINE_integer('channels', 64,
+tf.app.flags.DEFINE_integer('g_depth', 8,
+                            """Depth of the network: number of layers, residual blocks, etc.""")
+tf.app.flags.DEFINE_integer('channels', 80,
                             """Number of features in hidden layers.""")
-tf.app.flags.DEFINE_integer('channels2', 32,
+tf.app.flags.DEFINE_integer('channels2', 40,
                             """Number of features after resize conv.""")
 tf.app.flags.DEFINE_float('batch_norm', 0.99,
                             """Moving average decay for Batch Normalization.""")
-tf.app.flags.DEFINE_string('activation', 'prelu',
+tf.app.flags.DEFINE_string('activation', 'su',
                             """Activation function used.""")
 
 # training parameters
@@ -53,7 +53,7 @@ tf.app.flags.DEFINE_float('lr_min', 0,
                             """Minimum learning rate""")
 tf.app.flags.DEFINE_float('lr_decay_steps', 500,
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.99,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.01,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
@@ -88,7 +88,7 @@ class SRmodel(object):
         
         self.k_first = config.k_first
         self.k_last = config.k_last
-        self.res_blocks = config.res_blocks
+        self.g_depth = config.g_depth
         self.channels = config.channels
         self.channels2 = config.channels2
         self.batch_norm = config.batch_norm
@@ -122,8 +122,8 @@ class SRmodel(object):
             self.shape_hr = [self.batch_size, self.output_height, self.output_width, self.image_channels]
     
     def generator(self, images_lr, is_training=False, reuse=None):
-        print('k_first={}, k_last={}, res_blocks={}, channels={}, channels2={}'.format(
-            self.k_first, self.k_last, self.res_blocks, self.channels, self.channels2))
+        print('k_first={}, k_last={}, g_depth={}, channels={}, channels2={}'.format(
+            self.k_first, self.k_last, self.g_depth, self.channels, self.channels2))
         # parameters
         data_format = self.data_format
         channels = self.channels
@@ -138,6 +138,7 @@ class SRmodel(object):
         last = images_lr
         l = 0
         with tf.variable_scope('generator', reuse=reuse) as scope:
+            skip0 = last
             # first conv layer
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -148,10 +149,10 @@ class SRmodel(object):
                     collection=weight_key)
             skip1 = last
             # residual blocks
-            rb = 0
+            depth = 0
             skip2 = last
-            while rb < self.res_blocks:
-                rb += 1
+            while depth < self.g_depth:
+                depth += 1
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.apply_batch_norm(last, decay=batch_norm,
@@ -219,6 +220,15 @@ class SRmodel(object):
                     batch_norm=None, is_training=is_training, activation=None,
                     initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
+            # skip connection
+            with tf.variable_scope('skip_connection{}'.format(l)) as scope:
+                if data_format == 'NCHW':
+                    skip0 = tf.transpose(skip0, (0, 2, 3, 1))
+                up_size = tf.shape(skip0)[-3:-1] * self.scaling
+                skip0 = tf.image.resize_nearest_neighbor(skip0, up_size)
+                if data_format == 'NCHW':
+                    skip0 = tf.transpose(skip0, (0, 3, 1, 2))
+                last = tf.add(last, skip0)
         # return SR image
         print('Generator: totally {} convolutional layers.'.format(l))
         return last
@@ -308,6 +318,9 @@ class SRmodel(object):
             self.learning_rate, self.lr_decay_steps, self.lr_decay_factor,
             self.lr_min, self.weight_decay))
         
+        # training ops
+        g_train_ops = []
+        
         # dependency need to be updated
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         
@@ -318,23 +331,32 @@ class SRmodel(object):
         if loss_averages_op: update_ops.append(loss_averages_op)
         
         # decay the learning rate exponentially based on the number of steps
-        g_lr = self.learning_rate
         if self.lr_decay_steps > 0 and self.lr_decay_factor != 1:
-            g_lr = tf.train.exponential_decay(g_lr, global_step,
-                self.lr_decay_steps, self.lr_decay_factor, staircase=True)
+            g_lr = tf.train.exponential_decay(self.learning_rate, global_step,
+                self.lr_decay_steps, 1 - self.lr_decay_factor, staircase=True)
+            '''
+            lr_decay_rate = tf.Variable(self.lr_decay_factor, trainable=False)
+            lr_decay_rate_new = tf.cond(tf.logical_and(tf.greater(global_step, 0),
+                tf.equal(global_step % 50000, 0)),
+                lambda: lr_decay_rate * 0.6, lambda: lr_decay_rate)
+            g_train_ops.append(tf.assign(lr_decay_rate, lr_decay_rate_new, use_locking=True))
+
+            g_lr = tf.Variable(self.learning_rate, trainable=False)
+            g_lr_new = tf.cond(tf.logical_and(tf.greater(global_step, 0),
+                tf.equal(global_step % self.lr_decay_steps, 0)),
+                lambda: g_lr * (1 - lr_decay_rate), lambda: g_lr)
+            g_train_ops.append(tf.assign(g_lr, g_lr_new, use_locking=True))
+            '''
             if self.lr_min > 0:
                 g_lr = tf.maximum(tf.constant(self.lr_min, dtype=self.dtype), g_lr)
+        else:
+            g_lr = self.learning_rate
         tf.summary.scalar('g_learning_rate', g_lr)
-        
-        # training ops
-        g_train_ops = []
         
         # optimizer
         #g_opt = tf.train.MomentumOptimizer(g_lr, momentum=self.learning_momentum, use_nesterov=True)
-        g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
+        g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
             beta2=self.learning_beta2, epsilon=self.epsilon)
-        #g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
-        #    beta2=self.learning_beta2, epsilon=self.epsilon)
         
         # compute gradients
         with tf.control_dependencies(update_ops):

@@ -114,6 +114,18 @@ def PReLU(last, data_format='NHWC'):
         #alpha = tf.expand_dims(tf.expand_dims(alpha, -1), -1)
     return tf.maximum(0.0, last) + alpha * tf.minimum(0.0, last)
 
+def SelectionUnit(last, data_format='NHWC'):
+    with tf.variable_scope('selection_unit') as scope:
+        skip = last
+        last = tf.nn.relu(last)
+        last = conv2d(last, ksize=1, out_channels=None,
+            stride=1, padding='SAME', data_format=data_format,
+            batch_norm=None, is_training=False, activation=None,
+            initializer=4, init_factor=1.0,
+            collection=None)
+        last = tf.sigmoid(last)
+        return tf.multiply(skip, last)
+
 def apply_activation(last, activation, data_format='NHWC'):
     if isinstance(activation, str):
         activation = activation.lower()
@@ -128,17 +140,24 @@ def apply_activation(last, activation, data_format='NHWC'):
             else: alpha = 0.3
             lrelu = tf.contrib.keras.layers.LeakyReLU(alpha=alpha)
             last = lrelu(last)
+        elif activation == 'elu':
+            last = tf.nn.elu(last)
+        elif activation == 'crelu':
+            last = tf.nn.crelu(last)
+        elif activation == 'su':
+            last = SelectionUnit(last, data_format)
         else:
             raise ValueError('Unrecognized \'activation\' specified!')
         #activation_summary(last)
     return last
 
-def conv2d(last, ksize, out_channels,
+def conv2d(last, ksize, out_channels=None,
            stride=1, padding='SAME', data_format='NHWC',
            batch_norm=None, is_training=False, activation=None,
            initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
+    if out_channels is None: out_channels = in_channels
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
     if isinstance(stride, int) or isinstance(stride, tf.Dimension):
@@ -164,7 +183,7 @@ def depthwise_conv2d(last, ksize, channel_multiplier=1,
                      batch_norm=None, is_training=False, activation=None,
                      initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     out_channels = in_channels * channel_multiplier
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
@@ -191,7 +210,7 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
                      batch_norm=None, is_training=False, activation=None,
                      initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     temp_channels = in_channels * channel_multiplier
     if out_channels is None: out_channels = temp_channels
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
@@ -220,12 +239,13 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
 
 # checkerboard artifacts free resize convolution
 # https://distill.pub/2016/deconv-checkerboard/
-def resize_conv2d(last, ksize, out_channels,
+def resize_conv2d(last, ksize, out_channels=None,
                   scaling=2, data_format='NHWC',
                   batch_norm=None, is_training=False, activation=None,
                   initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
+    if out_channels is None: out_channels = in_channels
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
@@ -272,7 +292,7 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
                             batch_norm=None, is_training=False, activation=None,
                             initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     out_channels = in_channels // channel_multiplier
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
@@ -352,12 +372,13 @@ def periodic_shuffling(X, r, data_format='NHWC'):
         X = tf.concat([_phase_shift(x, r, shape, data_format) for x in Xc], axis=-1)
     return X
 
-def subpixel_conv2d(last, ksize, out_channels,
+def subpixel_conv2d(last, ksize, out_channels=None,
                     scaling=2, padding='SAME', data_format='NHWC',
                     batch_norm=None, is_training=False, activation=None,
                     initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
+    if out_channels is None: out_channels = in_channels
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
@@ -386,7 +407,7 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
                               batch_norm=None, is_training=False, activation=None,
                               initializer=1, init_factor=1.0, wd=None, collection=None):
     # parameters
-    in_channels = last.get_shape()[-3] if data_format == 'NCHW' else last.get_shape()[-1]
+    in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
         ksize = [ksize, ksize]
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):

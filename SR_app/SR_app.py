@@ -260,7 +260,7 @@ def main(argv=None):
                 src = src[:, :, :-1]
             # process
             dst = filter.process(src, max_patch_height=FLAGS.patch_height, max_patch_width=FLAGS.patch_width,
-                                 patch_pad=FLAGS.patch_pad, data_format='NHWC', msg=None)
+                                 patch_pad=FLAGS.patch_pad, data_format='NHWC', msg=None if thread_num > 1 else True)
             # process and merge alpha channel
             if channels == 2 or channels == 4:
                 dtype = alpha.dtype

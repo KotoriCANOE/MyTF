@@ -53,6 +53,8 @@ tf.app.flags.DEFINE_boolean('pre_down', False,
                             """Pre-downscale large image for (probably) higher quality data.""")
 tf.app.flags.DEFINE_float('color_augmentation', 0.05,
                             """Amount of random color augmentations.""")
+tf.app.flags.DEFINE_float('random_resizer', 0,
+                            """value for resizer choice, 0 for random resizer.""")
 tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
@@ -120,7 +122,7 @@ def train():
         g_loss = model.build_train(images_lr, images_hr)
         
         # training step and op
-        global_step = tf.contrib.framework.get_or_create_global_step()
+        global_step = tf.train.get_or_create_global_step()
         g_train_op = model.train(global_step)
         
         # a saver object which will save all the variables

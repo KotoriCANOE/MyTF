@@ -17,8 +17,6 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to read checkpoint.""")
 tf.app.flags.DEFINE_string('graph_dir', './graph.tmp',
                            """Directory where to write meta graph and data.""")
-tf.app.flags.DEFINE_integer('threads', 8,
-                            """Number of threads for Dataset process.""")
 
 # build and save graph
 def graph():
@@ -32,7 +30,7 @@ def graph():
         model.build_model()
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver()
+        saver = tf.train.Saver(var_list=model.g_mvars)
         
         # create session
         gpu_options = tf.GPUOptions(allow_growth=True)
@@ -44,10 +42,10 @@ def graph():
         saver.restore(sess, tf.train.latest_checkpoint(FLAGS.train_dir))
         
         # save the graph
-        saver.export_meta_graph(os.path.join(FLAGS.graph_dir, 'model.pbtxt'),
-            as_text=True, clear_devices=True)#, clear_extraneous_savers=True)
+        #saver.export_meta_graph(os.path.join(FLAGS.graph_dir, 'model.pbtxt'),
+        #    as_text=True, clear_devices=True, clear_extraneous_savers=True)
         saver.export_meta_graph(os.path.join(FLAGS.graph_dir, 'model.meta'),
-            as_text=False, clear_devices=True)#, clear_extraneous_savers=True)
+            as_text=False, clear_devices=True, clear_extraneous_savers=True)
         saver.save(sess, os.path.join(FLAGS.graph_dir, 'model'),
                    write_meta_graph=False, write_state=False)
 
