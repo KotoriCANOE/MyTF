@@ -217,7 +217,10 @@ def inputs(config, files, is_training=False, is_testing=False):
         # parameters
         dw = patch_width // scaling
         dh = patch_height // scaling
-        rand_val = np.random.uniform(-1, 1)
+        if config.random_resizer == 0:
+            rand_val = np.random.uniform(-1, 1)
+        else:
+            rand_val = config.random_resizer
         abs_rand = np.abs(rand_val)
         # select source
         shape = _src_ref[n].shape
@@ -241,19 +244,19 @@ def inputs(config, files, is_training=False, is_testing=False):
             taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
             clip = resizes['lanczos{}'.format(taps)]
         elif abs_rand < 0.6: # Catmull-Rom
-            b = np.random.normal(0, 1/6)
+            b = 0 if config.random_resizer == 0.4 else np.random.normal(0, 1/6)
             c = (1 - b) * 0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
         elif abs_rand < 0.7: # Mitchell-Netravali (standard Bicubic)
-            b = np.random.normal(1/3, 1/6)
+            b = 1/3 if config.random_resizer == 0.6 else np.random.normal(1/3, 1/6)
             c = (1 - b) * 0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
         elif abs_rand < 0.8: # sharp Bicubic
-            b = np.random.normal(-0.5, 0.25)
+            b = -0.5 if config.random_resizer == 0.7 else np.random.normal(-0.5, 0.25)
             c = b * -0.5
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
         elif abs_rand < 0.9: # soft Bicubic
-            b = np.random.normal(0.75, 0.25)
+            b = 0.75 if config.random_resizer == 0.8 else np.random.normal(0.75, 0.25)
             c = 1 - b
             clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
         else: # arbitrary Bicubic
@@ -389,12 +392,12 @@ def inputs(config, files, is_training=False, is_testing=False):
     dataset = tf.contrib.data.Dataset.from_tensor_slices((files))
     if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
     dataset = dataset.map(parse1_func, num_threads=threads,
-                          output_buffer_size=threads * 64)
+                          output_buffer_size=threads * 8)
     dataset = dataset.map(lambda label: tuple(tf.py_func(parse2_pyfunc,
                               [label], [tf.float32, tf.float32])),
-                          num_threads=1 if is_testing else threads_py, output_buffer_size=threads_py * 64)
+                          num_threads=1 if is_testing else threads_py, output_buffer_size=threads_py * 8)
     dataset = dataset.map(parse3_func, num_threads=1 if is_testing else threads,
-                          output_buffer_size=threads * 64)
+                          output_buffer_size=threads * 8)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(num_epochs if is_training else None)
     

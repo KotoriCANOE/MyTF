@@ -6,6 +6,7 @@
 
 # Images
 images/
+Thumbs.db
 *.jpg
 *.jpeg
 *.png
