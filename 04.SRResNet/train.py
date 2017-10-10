@@ -2,6 +2,7 @@ import sys
 import os
 from datetime import datetime
 import time
+import numpy as np
 import tensorflow as tf
 from tensorflow.python.client import timeline
 sys.path.append('..')
@@ -31,7 +32,7 @@ tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
 tf.app.flags.DEFINE_integer('timeline_steps', 911,
                             """Number of steps to save timeline.""")
-tf.app.flags.DEFINE_integer('threads', 16,
+tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
@@ -39,7 +40,7 @@ tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_integer('log_frequency', 500,
+tf.app.flags.DEFINE_integer('log_frequency', 5000,
                             """Log frequency.""")
 tf.app.flags.DEFINE_integer('patch_height', 96,
                             """Block size y.""")
@@ -108,6 +109,29 @@ def train():
     print('epoch size: {}\n{} steps per epoch\n{} epochs\n{} steps'.format(
         epoch_size, steps_per_epoch, FLAGS.num_epochs, max_steps))
     
+    # validation set
+    if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
+        val_size = min(FLAGS.batch_size * 50, epoch_size // (10 * FLAGS.batch_size) * FLAGS.batch_size)
+        val_batches = val_size // FLAGS.batch_size
+        val_files = files[: : (epoch_size + val_size - 1) // val_size]
+        val_lr_batches = []
+        val_hr_batches = []
+        val_losses = []
+        with tf.Graph().as_default():
+            # dataset
+            with tf.device('/cpu:0'):
+                val_lr, val_hr = inputs(FLAGS, val_files, is_training=True)
+            # session
+            gpu_options = tf.GPUOptions(allow_growth=True)
+            config = tf.ConfigProto(gpu_options=gpu_options,
+                log_device_placement=FLAGS.log_device_placement)
+            with tf.Session(config=config) as sess:
+                for _ in range(val_batches):
+                    _lr, _hr = sess.run((val_lr, val_hr))
+                    val_lr_batches.append(_lr)
+                    val_hr_batches.append(_hr)
+    
+    # main training graph
     with tf.Graph().as_default():
         # pre-processing for input
         with tf.device('/cpu:0'):
@@ -121,17 +145,26 @@ def train():
         
         g_loss = model.build_train(images_lr, images_hr)
         
+        # lr decay operator
+        if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
+            lr_decay_op = model.lr_decay()
+            val_window = tf.Variable(10.0, trainable=False, name='validation_window_size')
+            val_window_inc = 10.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
+            val_window_inc = tf.assign_add(val_window, val_window_inc, use_locking=True)
+        
         # training step and op
         global_step = tf.train.get_or_create_global_step()
         g_train_op = model.train(global_step)
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_mvars, max_to_keep=1 << 16,
-                               save_relative_paths=True)
+        saver = tf.train.Saver(var_list=model.g_svars,
+            max_to_keep=1 << 16, save_relative_paths=True)
+        
+        if FLAGS.pretrain_dir and not FLAGS.restore:
+            g_svars = list(set(model.g_tvars + model.g_mvars))
+            saver0 = tf.train.Saver(var_list=g_svars)
         
         # save the graph
-        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.pbtxt'),
-            as_text=True, clear_devices=True, clear_extraneous_savers=True)
         saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
             as_text=False, clear_devices=True, clear_extraneous_savers=True)
         
@@ -153,25 +186,55 @@ def train():
                 run_metadata = tf.RunMetadata()
             # restore pre-trained model
             if FLAGS.pretrain_dir and not FLAGS.restore:
-                saver.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
-            # sessions
+                saver0.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
+            # get variables
+            val_window_ = sess.run(val_window)
+            val_window_ = int(np.round(val_window_))
+            lr_decay_last = val_window_
+            # training session call
             def run_sess(options=None, run_metadata=None):
                 mon_sess.run(g_train_op, options=options, run_metadata=run_metadata)
             # run session
             while not mon_sess.should_stop():
-                step = tf.train.global_step(sess, global_step)
-                if FLAGS.timeline_steps > 0 and step // FLAGS.timeline_steps < 10 and step % FLAGS.timeline_steps == 0:
+                global_step_ = tf.train.global_step(sess, global_step)
+                # collect timeline info
+                if FLAGS.timeline_steps > 0 and global_step_ // FLAGS.timeline_steps < 10 and global_step_ % FLAGS.timeline_steps == 0:
                     run_sess(run_options, run_metadata)
                     # Create the Timeline object, and write it to a json
                     tl = timeline.Timeline(run_metadata.step_stats)
                     ctf = tl.generate_chrome_trace_format()
-                    with open(os.path.join(FLAGS.train_dir, 'timeline_{:0>7}.json'.format(step)), 'a') as f:
+                    with open(os.path.join(FLAGS.train_dir, 'timeline_{:0>7}.json'.format(global_step_)), 'a') as f:
                         f.write(ctf)
                 else:
                     run_sess()
-                if FLAGS.save_steps > 0 and step % FLAGS.save_steps == 0:
-                    saver.save(sess, os.path.join(FLAGS.train_dir, 'model_{:0>7}'.format(step)),
+                # save model periodically
+                if FLAGS.save_steps > 0 and global_step_ % FLAGS.save_steps == 0:
+                    saver.save(sess, os.path.join(FLAGS.train_dir, 'model_{:0>7}'.format(global_step_)),
                                write_meta_graph=False, write_state=False)
+                # test model on validation set
+                if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0 and global_step_ % FLAGS.lr_decay_steps == 0:
+                    # get validation error on current model
+                    val_batches_loss = []
+                    for _ in range(val_batches):
+                        feed_dict = {images_lr: val_lr_batches[_], images_hr: val_hr_batches[_]}
+                        val_batches_loss.append(sess.run(g_loss, feed_dict=feed_dict))
+                    val_loss = np.mean(val_batches_loss)
+                    val_losses.append(val_loss)
+                    print('validation: step {}, val_loss = {:.8}'.format(global_step_, val_loss))
+                    # compare recent few losses to previous few losses, decay learning rate if not decreasing
+                    if len(val_losses) >= lr_decay_last + val_window_:
+                        val_current = val_losses[-val_window_ : ]
+                        val_previous = val_losses[-val_window_ * 2 : -val_window_]
+                        val_current = np.mean(val_current), np.median(val_current), np.min(val_current)
+                        val_previous = np.mean(val_previous), np.median(val_previous), np.min(val_previous)
+                        print('    statistics of {} losses (mean | median | min)'.format(val_window_))
+                        print('        previous: {}'.format(val_previous))
+                        print('        current:  {}'.format(val_current))
+                        if val_current[0] >= val_previous[0] and val_current[1] >= val_previous[1]:
+                            lr_decay_last = len(val_losses)
+                            val_window_, lr_ = sess.run((val_window_inc, lr_decay_op))
+                            val_window_ = int(np.round(val_window_))
+                            print('    learning rate decayed to {}'.format(lr_))
 
 # main
 def main(argv=None):

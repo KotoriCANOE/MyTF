@@ -30,7 +30,7 @@ def graph():
         model.build_model()
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_mvars)
+        saver = tf.train.Saver(var_list=model.g_svars)
         
         # create session
         gpu_options = tf.GPUOptions(allow_growth=True)

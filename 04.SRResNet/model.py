@@ -51,9 +51,9 @@ tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('lr_min', 0,
                             """Minimum learning rate""")
-tf.app.flags.DEFINE_float('lr_decay_steps', 500,
+tf.app.flags.DEFINE_float('lr_decay_steps', -200, #500,
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.01,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.29, #0.01,
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
@@ -65,7 +65,7 @@ tf.app.flags.DEFINE_float('epsilon', 1e-8,
                             """Fuzz term to avoid numerical instability""")
 tf.app.flags.DEFINE_float('loss_moving_average', 0, #0.9,
                             """The decay to use for the moving average of losses""")
-tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
+tf.app.flags.DEFINE_float('train_moving_average', 0.9999,
                             """The decay to use for the moving average of trainable variables""")
 
 # model
@@ -286,10 +286,16 @@ class SRmodel(object):
             tf.identity(self.images_sr, name='Output')
         
         # trainable and model variables
-        t_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
-        m_vars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
-        self.g_tvars = t_vars
-        self.g_mvars = list(set(t_vars + m_vars))
+        self.g_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
+        self.g_mvars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
+        self.g_svars = list(set(self.g_tvars + self.g_mvars))
+        
+        # track the moving averages of all trainable variables
+        if not is_training and self.train_moving_average > 0:
+            with tf.variable_scope('train_moving_average') as scope:
+                ema = tf.train.ExponentialMovingAverage(self.train_moving_average)
+                g_ema_op = ema.apply(self.g_svars)
+                self.g_svars = {ema.average_name(var): var for var in self.g_svars}
         
         # return generated results
         return self.images_sr
@@ -310,8 +316,14 @@ class SRmodel(object):
         # build generator losses
         self.g_loss = self.generator_losses(self.images_hr, self.images_sr)
         
+        # set learning rate
+        self.g_lr = tf.Variable(self.learning_rate, trainable=False, name='generator_lr')
+        
         # return total loss(es)
         return self.g_loss
+    
+    def lr_decay(self):
+        return tf.assign(self.g_lr, self.g_lr * (1 - self.lr_decay_factor), use_locking=True)
     
     def train(self, global_step):
         print('lr: {}, decay steps: {}, decay factor: {}, min: {}, weight decay: {}'.format(
@@ -331,30 +343,16 @@ class SRmodel(object):
         if loss_averages_op: update_ops.append(loss_averages_op)
         
         # decay the learning rate exponentially based on the number of steps
-        if self.lr_decay_steps > 0 and self.lr_decay_factor != 1:
-            g_lr = tf.train.exponential_decay(self.learning_rate, global_step,
+        if self.lr_decay_steps > 0 and self.lr_decay_factor != 0:
+            g_lr = tf.train.exponential_decay(self.g_lr, global_step,
                 self.lr_decay_steps, 1 - self.lr_decay_factor, staircase=True)
-            '''
-            lr_decay_rate = tf.Variable(self.lr_decay_factor, trainable=False)
-            lr_decay_rate_new = tf.cond(tf.logical_and(tf.greater(global_step, 0),
-                tf.equal(global_step % 50000, 0)),
-                lambda: lr_decay_rate * 0.6, lambda: lr_decay_rate)
-            g_train_ops.append(tf.assign(lr_decay_rate, lr_decay_rate_new, use_locking=True))
-
-            g_lr = tf.Variable(self.learning_rate, trainable=False)
-            g_lr_new = tf.cond(tf.logical_and(tf.greater(global_step, 0),
-                tf.equal(global_step % self.lr_decay_steps, 0)),
-                lambda: g_lr * (1 - lr_decay_rate), lambda: g_lr)
-            g_train_ops.append(tf.assign(g_lr, g_lr_new, use_locking=True))
-            '''
             if self.lr_min > 0:
                 g_lr = tf.maximum(tf.constant(self.lr_min, dtype=self.dtype), g_lr)
         else:
-            g_lr = self.learning_rate
+            g_lr = self.g_lr
         tf.summary.scalar('g_learning_rate', g_lr)
         
         # optimizer
-        #g_opt = tf.train.MomentumOptimizer(g_lr, momentum=self.learning_momentum, use_nesterov=True)
         g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
             beta2=self.learning_beta2, epsilon=self.epsilon)
         
@@ -374,10 +372,11 @@ class SRmodel(object):
         
         # track the moving averages of all trainable variables
         if self.train_moving_average > 0:
-            variable_averages = tf.train.ExponentialMovingAverage(
-                    self.train_moving_average, global_step, name='train_moving_average')
-            variable_averages_op = variable_averages.apply(tf.trainable_variables())
-            g_train_ops.append(variable_averages_op)
+            with tf.variable_scope('train_moving_average') as scope:
+                ema = tf.train.ExponentialMovingAverage(self.train_moving_average, global_step)
+                g_ema_op = ema.apply(self.g_svars)
+                g_train_ops.append(g_ema_op)
+                self.g_svars = [ema.average(var) for var in self.g_svars]
         
         # generate operation
         with tf.control_dependencies(g_train_ops):
