@@ -158,7 +158,7 @@ class SRmodel(object):
                     last = layers.apply_batch_norm(last, decay=batch_norm,
                         is_training=is_training, data_format=data_format)
                     last = layers.apply_activation(last, activation=activation,
-                        data_format=data_format)
+                        data_format=data_format, collection=weight_key)
                     last = layers.conv2d(last, ksize=3, out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
                         batch_norm=None, is_training=is_training, activation=None,
@@ -169,13 +169,15 @@ class SRmodel(object):
                     last = layers.apply_batch_norm(last, decay=batch_norm,
                         is_training=is_training, data_format=data_format)
                     last = layers.apply_activation(last, activation=activation,
-                        data_format=data_format)
+                        data_format=data_format, collection=weight_key)
                     last = layers.conv2d(last, ksize=3, out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
                         batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
+                    last = layers.SqueezeExcitation(last, channel_r=2,
+                        data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
                     skip2 = last
             # skip connection
@@ -184,16 +186,18 @@ class SRmodel(object):
                 last = layers.apply_batch_norm(last, decay=batch_norm,
                     is_training=is_training, data_format=data_format)
                 last = layers.apply_activation(last, activation=activation,
-                    data_format=data_format)
+                    data_format=data_format, collection=weight_key)
                 last = layers.conv2d(last, ksize=3, out_channels=channels,
                     stride=1, padding='SAME', data_format=data_format,
                     batch_norm=None, is_training=is_training, activation=None,
                     initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
+                last = layers.SqueezeExcitation(last, channel_r=2,
+                    data_format=data_format, collection=weight_key)
                 last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
-                    data_format=data_format)
+                    data_format=data_format, collection=weight_key)
             # resize conv layer
             l += 1
             with tf.variable_scope('resize_conv{}'.format(l)) as scope:

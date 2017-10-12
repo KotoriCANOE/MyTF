@@ -111,6 +111,7 @@ def train():
     
     # validation set
     if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
+        MAX_VAL_WINDOW = 50
         val_size = min(FLAGS.batch_size * 50, epoch_size // (10 * FLAGS.batch_size) * FLAGS.batch_size)
         val_batches = val_size // FLAGS.batch_size
         val_files = files[: : (epoch_size + val_size - 1) // val_size]
@@ -148,8 +149,11 @@ def train():
         # lr decay operator
         if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
             lr_decay_op = model.lr_decay()
-            val_window = tf.Variable(10.0, trainable=False, name='validation_window_size')
-            val_window_inc = 10.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
+            val_window = tf.Variable(10.0, trainable=False, dtype=tf.float64,
+                name='validation_window_size')
+            val_window_inc = 12.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
+            val_window_inc = tf.Variable(val_window_inc, trainable=False, dtype=tf.float64)
+            val_window_inc = tf.assign(val_window_inc, val_window_inc * 0.9, use_locking=True)
             val_window_inc = tf.assign_add(val_window, val_window_inc, use_locking=True)
         
         # training step and op
@@ -189,7 +193,7 @@ def train():
                 saver0.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
             # get variables
             val_window_ = sess.run(val_window)
-            val_window_ = int(np.round(val_window_))
+            val_window_ = min(MAX_VAL_WINDOW, int(np.round(val_window_)))
             lr_decay_last = val_window_
             # training session call
             def run_sess(options=None, run_metadata=None):
@@ -223,17 +227,20 @@ def train():
                     print('validation: step {}, val_loss = {:.8}'.format(global_step_, val_loss))
                     # compare recent few losses to previous few losses, decay learning rate if not decreasing
                     if len(val_losses) >= lr_decay_last + val_window_:
-                        val_current = val_losses[-val_window_ : ]
-                        val_previous = val_losses[-val_window_ * 2 : -val_window_]
-                        val_current = np.mean(val_current), np.median(val_current), np.min(val_current)
-                        val_previous = np.mean(val_previous), np.median(val_previous), np.min(val_previous)
+                        val_current = np.sort(val_losses[-val_window_ : ])
+                        val_previous = np.sort(val_losses[-val_window_ * 2 : -val_window_])
+                        def _mean(array, percent=0.1):
+                            clip = int(np.round(len(array) * percent))
+                            return np.mean(np.sort(array)[clip : -clip if clip > 0 else None])
+                        val_current = _mean(val_current), np.median(val_current), np.min(val_current)
+                        val_previous = _mean(val_previous), np.median(val_previous), np.min(val_previous)
                         print('    statistics of {} losses (mean | median | min)'.format(val_window_))
                         print('        previous: {}'.format(val_previous))
                         print('        current:  {}'.format(val_current))
                         if val_current[0] >= val_previous[0] and val_current[1] >= val_previous[1]:
                             lr_decay_last = len(val_losses)
                             val_window_, lr_ = sess.run((val_window_inc, lr_decay_op))
-                            val_window_ = int(np.round(val_window_))
+                            val_window_ = min(MAX_VAL_WINDOW, int(np.round(val_window_)))
                             print('    learning rate decayed to {}'.format(lr_))
 
 # main

@@ -104,17 +104,17 @@ def apply_batch_norm(last, decay=0.999, is_training=False, data_format='NHWC',
     else:
         return last
 
-def PReLU(last, data_format='NHWC'):
+def PReLU(last, data_format='NHWC', collection=None):
     shape = last.get_shape()
     shape = shape[-3] if data_format == 'NCHW' else shape[-1]
     shape = [shape, 1, 1]
-    alpha = get_variable('alpha', shape, tf.zeros_initializer())
+    alpha = get_variable('alpha', shape, tf.zeros_initializer(), collection)
     if data_format != 'NCHW':
         alpha = tf.squeeze(alpha, axis=[-2, -1])
         #alpha = tf.expand_dims(tf.expand_dims(alpha, -1), -1)
     return tf.maximum(0.0, last) + alpha * tf.minimum(0.0, last)
 
-def SelectionUnit(last, data_format='NHWC'):
+def SelectionUnit(last, data_format='NHWC', collection=None):
     with tf.variable_scope('selection_unit') as scope:
         skip = last
         last = tf.nn.relu(last)
@@ -122,18 +122,47 @@ def SelectionUnit(last, data_format='NHWC'):
             stride=1, padding='SAME', data_format=data_format,
             batch_norm=None, is_training=False, activation=None,
             initializer=4, init_factor=1.0,
-            collection=None)
+            collection=collection)
         last = tf.sigmoid(last)
         return tf.multiply(skip, last)
 
-def apply_activation(last, activation, data_format='NHWC'):
+def SqueezeExcitation(last, channels=None, channel_r=1, data_format='NHWC', collection=None):
+    shape = helper.dim2int(last.get_shape())
+    in_channels = shape[-3] if data_format == 'NCHW' else shape[-1]
+    if channels is None: channels = in_channels
+    channels //= channel_r
+    with tf.variable_scope('squeeze_excitation') as scope:
+        skip = last
+        # global average pooling - NxC
+        last = tf.reduce_mean(last, [-2, -1] if data_format == 'NCHW' else [-3, -2])
+        # initializer
+        initializer = tf.variance_scaling_initializer(
+            scale=1.0, mode='fan_avg', distribution='normal')
+        # FC - Nx(C/r)
+        last = tf.contrib.layers.fully_connected(last, channels,
+            activation_fn=tf.nn.relu, weights_initializer=initializer,
+            variables_collections=collection)
+        # FC - NxC
+        last = tf.contrib.layers.fully_connected(last, in_channels,
+            activation_fn=tf.sigmoid, weights_initializer=initializer,
+            variables_collections=collection)
+        # scale
+        if data_format == 'NCHW':
+            last = tf.expand_dims(last, -1)
+            last = tf.expand_dims(last, -1)
+        else:
+            last = tf.expand_dims(last, -2)
+            last = tf.expand_dims(last, -2)
+        return tf.multiply(skip, last)
+
+def apply_activation(last, activation, data_format='NHWC', collection=None):
     if isinstance(activation, str):
         activation = activation.lower()
     if activation and activation != 'none':
         if activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':
-            last = PReLU(last, data_format)
+            last = PReLU(last, data_format, collection)
         elif activation[0:5] == 'lrelu':
             alpha = activation[5:]
             if alpha: alpha = float(alpha)
@@ -145,7 +174,12 @@ def apply_activation(last, activation, data_format='NHWC'):
         elif activation == 'crelu':
             last = tf.nn.crelu(last)
         elif activation == 'su':
-            last = SelectionUnit(last, data_format)
+            last = SelectionUnit(last, data_format, collection)
+        elif activation[0:2] == 'se':
+            channel_r = activation[2:]
+            if channel_r: channel_r = float(channel_r)
+            else: channel_r = 1
+            last = SqueezeExcitation(last, None, channel_r, data_format, collection)
         else:
             raise ValueError('Unrecognized \'activation\' specified!')
         #activation_summary(last)
@@ -175,7 +209,7 @@ def conv2d(last, ksize, out_channels=None,
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
     return last
 
 def depthwise_conv2d(last, ksize, channel_multiplier=1,
@@ -202,7 +236,7 @@ def depthwise_conv2d(last, ksize, channel_multiplier=1,
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
     return last
 
 def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
@@ -234,7 +268,7 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
     return last
 
 # checkerboard artifacts free resize convolution
@@ -284,7 +318,7 @@ def resize_conv2d(last, ksize, out_channels=None,
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
     return last
 
 def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
@@ -328,7 +362,7 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
     return last
 
 # implementation of Periodic Shuffling for sub-pixel convolution
@@ -393,13 +427,13 @@ def subpixel_conv2d(last, ksize, out_channels=None,
                         padding=padding, data_format=data_format)
     biases = get_variable('biases', [temp_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
-    # periodic shuffling
-    last = periodic_shuffling(last, scaling, data_format)
     # batch normalization
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
+    # periodic shuffling
+    last = periodic_shuffling(last, scaling, data_format)
     return last
 
 def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
@@ -423,11 +457,11 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
                                          padding=padding, data_format=data_format)
     biases = get_variable('biases', [out_channels], tf.zeros_initializer())
     last = tf.nn.bias_add(last, biases, data_format=data_format)
-    # periodic shuffling
-    last = periodic_shuffling(last, scaling, data_format)
     # batch normalization
     last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
         data_format=data_format)
     # activation function
-    last = apply_activation(last, activation, data_format)
+    last = apply_activation(last, activation, data_format, collection)
+    # periodic shuffling
+    last = periodic_shuffling(last, scaling, data_format)
     return last
