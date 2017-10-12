@@ -199,14 +199,6 @@ class SRFilter:
         # return
         return dst
 
-# make directory
-def make_dirs(path):
-    import locale
-    encoding = locale.getpreferredencoding()
-    path = path.encode(encoding)
-    if not tf.gfile.Exists(path):
-        tf.gfile.MakeDirs(path)
-
 # recursively list all the files' path under directory
 def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
     import os, locale
@@ -236,7 +228,7 @@ def main(argv=None):
     else:
         thread_num = FLAGS.threads
     # directories and files
-    make_dirs(FLAGS.dst_dir)
+    if not os.path.exists(FLAGS.dst_dir): os.makedirs(FLAGS.dst_dir)
     src_files = listdir_files(FLAGS.src_dir, FLAGS.recursive, extensions)
     # initialization
     filter = SRFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.scaling, FLAGS.sess_threads)
@@ -275,9 +267,9 @@ def main(argv=None):
             # save
             save_dir = dir_path[len(FLAGS.src_dir):].strip('/').strip('\\')
             save_dir = os.path.join(FLAGS.dst_dir, save_dir)
-            make_dirs(save_dir)
+            if not os.path.exists(save_dir): os.makedirs(save_dir)
             save_file = os.path.join(save_dir, file_name + dst_postfix)
-            print(msg + 'Saving... {}'.format(save_file))
+            if thread_num == 1: print(msg + 'Saving... {}'.format(save_file))
             io.imsave(save_file, dst)
             print(msg + 'Result saved to {}'.format(save_file))
             # indicate enqueued task is complete
