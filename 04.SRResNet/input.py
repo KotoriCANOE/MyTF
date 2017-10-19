@@ -148,6 +148,7 @@ def inputs(config, files, is_training=False, is_testing=False):
     _index_ref = [0]
     _src_ref = [None for _ in range(epoch_size)]
     core = vs.get_core(threads=1 if is_testing else threads_py)
+    core.max_cache_size = 8000
     _dscales = list(range(1, 5)) if config.pre_down else [1]
     _src_blk = [core.std.BlankClip(None, patch_width * s, patch_height * s,
                                    format=vs.RGBS, length=epoch_size)
@@ -169,7 +170,6 @@ def inputs(config, files, is_training=False, is_testing=False):
     def src_down_func(clip):
         dw = patch_width
         dh = patch_height
-        #clip = clip.resize.Bicubic(transfer_s='linear', transfer_in_s='709')
         clip = SigmoidInverse(clip)
         clip = clip.resize.Bicubic(dw, dh, filter_param_a=0, filter_param_b=0.5)
         clip = SigmoidDirect(clip)
@@ -194,7 +194,7 @@ def inputs(config, files, is_training=False, is_testing=False):
     else:
         _src = _srcs[0]
     
-    def resize_set_func(clip, linear=False):
+    def resize_set_func(clip, convert_linear=False):
         # parameters
         dw = patch_width // scaling
         dh = patch_height // scaling
@@ -206,69 +206,77 @@ def inputs(config, files, is_training=False, is_testing=False):
         for taps in range(2, 12):
             rets['lanczos{}'.format(taps)] = clip.resize.Lanczos(dw, dh, filter_param_a=taps)
         # linear to gamma
-        if linear:
+        if convert_linear:
             for key in rets:
                 rets[key] = rets[key].resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         return rets
-    _resizes = [resize_set_func(s, linear=False) for s in _srcs]
-    _linear_resizes = [resize_set_func(s, linear=True) for s in _srcs_linear]
     
-    def resize_eval(n):
-        # parameters
-        dw = patch_width // scaling
-        dh = patch_height // scaling
-        if config.random_resizer == 0:
-            rand_val = np.random.uniform(-1, 1)
-        else:
-            rand_val = config.random_resizer
-        abs_rand = np.abs(rand_val)
+    def resize_eval(n, src, src_linear, resizes, linear_resizes, dscale=None, keep_linear=False, converted_linear=False):
         # select source
-        shape = _src_ref[n].shape
-        sh = shape[-2 if data_format == 'NCHW' else -3]
-        dscale = sh // patch_height
-        # random gamma-to-linear
-        if rand_val < 0:
-            clip = _srcs_linear[dscale - 1]
-            resizes = _linear_resizes[dscale - 1]
-        else:
-            clip = _srcs[dscale - 1]
-            resizes = _resizes[dscale - 1]
-        # random resizers
-        if abs_rand < 0.05:
-            clip = resizes['bilinear']
-        elif abs_rand < 0.1:
-            clip = resizes['spline16']
-        elif abs_rand < 0.15:
-            clip = resizes['spline36']
-        elif abs_rand < 0.4: # Lanczos taps=[2, 12)
-            taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
-            clip = resizes['lanczos{}'.format(taps)]
-        elif abs_rand < 0.6: # Catmull-Rom
-            b = 0 if config.random_resizer == 0.4 else np.random.normal(0, 1/6)
-            c = (1 - b) * 0.5
-            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        elif abs_rand < 0.7: # Mitchell-Netravali (standard Bicubic)
-            b = 1/3 if config.random_resizer == 0.6 else np.random.normal(1/3, 1/6)
-            c = (1 - b) * 0.5
-            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        elif abs_rand < 0.8: # sharp Bicubic
-            b = -0.5 if config.random_resizer == 0.7 else np.random.normal(-0.5, 0.25)
-            c = b * -0.5
-            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        elif abs_rand < 0.9: # soft Bicubic
-            b = 0.75 if config.random_resizer == 0.8 else np.random.normal(0.75, 0.25)
-            c = 1 - b
-            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        else: # arbitrary Bicubic
-            b = np.random.normal(0, 0.5)
-            c = np.random.normal(0.25, 0.25)
-            clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+        if dscale is True:
+            shape = _src_ref[n].shape
+            sh = shape[-2 if data_format == 'NCHW' else -3]
+            dscale = max(1, sh // patch_height)
+        if dscale:
+            src = src[dscale - 1]
+            src_linear = src_linear[dscale - 1]
+            resizes = resizes[dscale - 1]
+            linear_resizes = linear_resizes[dscale - 1]
+        # multiple stage
+        for _ in range(config.multistage_resize * 2 + 1):
+            dw = patch_width // scaling if _ % 2 == 0 else patch_width
+            dh = patch_height // scaling if _ % 2 == 0 else patch_height
+            # random number generator
+            rand_val = np.random.uniform(-1, 1) if config.random_resizer == 0 else config.random_resizer
+            abs_rand = np.abs(rand_val)
+            # random gamma-to-linear
+            if _ == 0:
+                is_linear = rand_val < 0 and (not converted_linear or abs_rand >= 0.4)
+                clip = src_linear if rand_val < 0 else src
+                resizes = linear_resizes if rand_val < 0 else resizes
+            # random resizers
+            if abs_rand < 0.05:
+                clip = resizes['bilinear'] if _ == 0 else clip.resize.Bilinear(dw, dh)
+            elif abs_rand < 0.1:
+                clip = resizes['spline16'] if _ == 0 else clip.resize.Spline16(dw, dh)
+            elif abs_rand < 0.15:
+                clip = resizes['spline36'] if _ == 0 else clip.resize.Spline36(dw, dh)
+            elif abs_rand < 0.4: # Lanczos taps=[2, 12)
+                taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
+                clip = resizes['lanczos{}'.format(taps)] if _ == 0 else clip.resize.Lanczos(dw, dh, filter_param_a=taps)
+            elif abs_rand < 0.6: # Catmull-Rom
+                b = 0 if config.random_resizer == 0.4 else np.random.normal(0, 1/6)
+                c = (1 - b) * 0.5
+                clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+            elif abs_rand < 0.7: # Mitchell-Netravali (standard Bicubic)
+                b = 1/3 if config.random_resizer == 0.6 else np.random.normal(1/3, 1/6)
+                c = (1 - b) * 0.5
+                clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+            elif abs_rand < 0.8: # sharp Bicubic
+                b = -0.5 if config.random_resizer == 0.7 else np.random.normal(-0.5, 0.25)
+                c = b * -0.5
+                clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+            elif abs_rand < 0.9: # soft Bicubic
+                b = 0.75 if config.random_resizer == 0.8 else np.random.normal(0.75, 0.25)
+                c = 1 - b
+                clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+            else: # arbitrary Bicubic
+                b = np.random.normal(0, 0.5)
+                c = np.random.normal(0.25, 0.25)
+                clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
+            # skip multistage resize
+            if config.multistage_resize > 0 and _ % 2 == 0 and np.random.uniform(0, 1) < 0.5:
+                break
         # random linear-to-gamma
-        if rand_val < 0 and abs_rand >= 0.4:
+        if not keep_linear and is_linear:
             clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         # return
         return clip
-    _dst = _dst_blk.std.FrameEval(resize_eval)
+    
+    _resizes = [resize_set_func(s, convert_linear=False) for s in _srcs]
+    _linear_resizes = [resize_set_func(s, convert_linear=config.multistage_resize == 0) for s in _srcs_linear]
+    _dst = _dst_blk.std.FrameEval(lambda n: resize_eval(n, _srcs, _srcs_linear, _resizes, _linear_resizes,
+        dscale=True, keep_linear=False, converted_linear=config.multistage_resize == 0))
     
     def parse2_pyfunc(label):
         channel_index = -3 if data_format == 'NCHW' else -1
@@ -354,37 +362,31 @@ def inputs(config, files, is_training=False, is_testing=False):
         data = tf.clip_by_value(data, 0.0, 1.0)
         label = tf.clip_by_value(label, 0.0, 1.0)
         # JPEG encoding
-        if config.jpeg_coding:
+        if config.jpeg_coding > 0:
+            steps = 16
+            prob_step = 0.02
             rand_val = tf.random_uniform([], 0, 1, seed=config.random_seed if is_testing else None)
             def c_f1(data):
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (1, 2, 0))
                 data = tf.image.convert_image_dtype(data, tf.uint8, saturate=True)
                 def _f1(quality):
+                    quality = int(quality + 0.5)
                     return tf.image.encode_jpeg(data, quality=quality, chroma_downsampling=False)
-                data = tf.cond(tf.less(rand_val, 0.02), lambda: _f1(100),
-                    lambda: tf.cond(tf.less(rand_val, 0.04), lambda: _f1(99),
-                    lambda: tf.cond(tf.less(rand_val, 0.06), lambda: _f1(98),
-                    lambda: tf.cond(tf.less(rand_val, 0.08), lambda: _f1(97),
-                    lambda: tf.cond(tf.less(rand_val, 0.10), lambda: _f1(96),
-                    lambda: tf.cond(tf.less(rand_val, 0.12), lambda: _f1(95),
-                    lambda: tf.cond(tf.less(rand_val, 0.14), lambda: _f1(94),
-                    lambda: tf.cond(tf.less(rand_val, 0.16), lambda: _f1(93),
-                    lambda: tf.cond(tf.less(rand_val, 0.18), lambda: _f1(92),
-                    lambda: tf.cond(tf.less(rand_val, 0.20), lambda: _f1(91),
-                    lambda: tf.cond(tf.less(rand_val, 0.22), lambda: _f1(90),
-                    lambda: tf.cond(tf.less(rand_val, 0.24), lambda: _f1(89),
-                    lambda: tf.cond(tf.less(rand_val, 0.26), lambda: _f1(88),
-                    lambda: tf.cond(tf.less(rand_val, 0.28), lambda: _f1(87),
-                    lambda: tf.cond(tf.less(rand_val, 0.30), lambda: _f1(86),
-                                                             lambda: _f1(85)
-                    )))))))))))))))
+                def _cond_recur(rand_val, count=15, prob=0.0, quality=100.0):
+                    prob += prob_step
+                    if count <= 0:
+                        return _f1(quality)
+                    else:
+                        return tf.cond(rand_val < prob, lambda: _f1(quality),
+                            lambda: _cond_recur(rand_val, count - 1, prob, quality - config.jpeg_coding))
+                data = _cond_recur(rand_val, steps - 1)
                 data = tf.image.decode_jpeg(data)
                 data = tf.image.convert_image_dtype(data, tf.float32, saturate=False)
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (2, 0, 1))
                 return data
-            data = tf.cond(tf.less(rand_val, 0.32), lambda: c_f1(data), lambda: data)
+            data = tf.cond(rand_val < prob_step * steps, lambda: c_f1(data), lambda: data)
         # return
         return data, label
     
@@ -400,6 +402,17 @@ def inputs(config, files, is_training=False, is_testing=False):
                           output_buffer_size=threads * 8)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(num_epochs if is_training else None)
+    '''
+    dataset = tf.data.Dataset.from_tensor_slices((files))
+    if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
+    dataset = dataset.map(parse1_func, num_parallel_calls=threads).prefetch(threads * 8)
+    dataset = dataset.map(lambda label: tuple(tf.py_func(parse2_pyfunc,
+                              [label], [tf.float32, tf.float32])),
+                          num_parallel_calls=1 if is_testing else threads_py).prefetch(threads_py * 8)
+    dataset = dataset.map(parse3_func, num_parallel_calls=1 if is_testing else threads).prefetch(threads * 8)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.repeat(num_epochs if is_training else None)
+    '''
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()
@@ -409,12 +422,8 @@ def inputs(config, files, is_training=False, is_testing=False):
     if data_format == 'NCHW':
         next_data.set_shape([None, channels, None, None])
         next_label.set_shape([None, channels, None, None])
-        #next_data.set_shape([None, channels, patch_height // scaling, patch_width // scaling])
-        #next_label.set_shape([None, channels, patch_height, patch_width])
     else:
         next_data.set_shape([None, None, None, channels])
         next_label.set_shape([None, None, None, channels])
-        #next_data.set_shape([None, patch_height // scaling, patch_width // scaling, channels])
-        #next_label.set_shape([None, patch_height, patch_width, channels])
     
     return next_data, next_label
