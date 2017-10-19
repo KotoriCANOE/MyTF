@@ -176,7 +176,7 @@ class SRmodel(object):
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                    last = layers.SqueezeExcitation(last, channel_r=2,
+                    last = layers.SqueezeExcitation(last, channel_r=1,
                         data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
                     skip2 = last
@@ -193,29 +193,19 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                last = layers.SqueezeExcitation(last, channel_r=2,
+                last = layers.SqueezeExcitation(last, channel_r=1,
                     data_format=data_format, collection=weight_key)
                 last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
                     data_format=data_format, collection=weight_key)
-            # resize conv layer
-            l += 1
-            with tf.variable_scope('resize_conv{}'.format(l)) as scope:
-                last = layers.resize_conv2d(last, ksize=3, out_channels=channels2,
-                    scaling=self.scaling, data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=activation,
-                    initializer=initializer, init_factor=init_factor,
-                    collection=weight_key)
-            '''
             # sub-pixel conv layer
             l += 1
             with tf.variable_scope('subpixel_conv{}'.format(l)) as scope:
                 last = layers.subpixel_conv2d(last, ksize=3, out_channels=channels2,
-                    scaling=self.scaling, data_format=data_format,
+                    scaling=self.scaling, padding='SAME', data_format=data_format,
                     batch_norm=None, is_training=is_training, activation=activation,
-                    initializer=initializer, init_factor=init_factor,
+                    initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
-            '''
             # final conv layer
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -226,12 +216,12 @@ class SRmodel(object):
                     collection=weight_key)
             # skip connection
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                if data_format == 'NCHW':
-                    skip0 = tf.transpose(skip0, (0, 2, 3, 1))
-                up_size = tf.shape(skip0)[-3:-1] * self.scaling
-                skip0 = tf.image.resize_nearest_neighbor(skip0, up_size)
-                if data_format == 'NCHW':
-                    skip0 = tf.transpose(skip0, (0, 3, 1, 2))
+                with tf.variable_scope('subpixel_conv') as scope:
+                    skip0 = layers.subpixel_conv2d(skip0, ksize=5, out_channels=self.image_channels,
+                        scaling=self.scaling, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=None,
+                        initializer=initializer, init_factor=init_factor,
+                        collection=weight_key)
                 last = tf.add(last, skip0)
         # return SR image
         print('Generator: totally {} convolutional layers.'.format(l))
@@ -327,7 +317,11 @@ class SRmodel(object):
         return self.g_loss
     
     def lr_decay(self):
-        return tf.assign(self.g_lr, self.g_lr * (1 - self.lr_decay_factor), use_locking=True)
+        self.g_lr_last = tf.Variable(self.g_lr, trainable=False)
+        g_lr_last_op = tf.assign(self.g_lr_last, self.g_lr, use_locking=True)
+        with tf.control_dependencies([g_lr_last_op]):
+            g_lr_decay_op = tf.assign(self.g_lr, self.g_lr * (1 - self.lr_decay_factor), use_locking=True)
+        return g_lr_decay_op
     
     def train(self, global_step):
         print('lr: {}, decay steps: {}, decay factor: {}, min: {}, weight decay: {}'.format(
@@ -380,6 +374,7 @@ class SRmodel(object):
                 ema = tf.train.ExponentialMovingAverage(self.train_moving_average, global_step)
                 g_ema_op = ema.apply(self.g_svars)
                 g_train_ops.append(g_ema_op)
+                self.g_rvars = {ema.average_name(var): var for var in self.g_svars}
                 self.g_svars = [ema.average(var) for var in self.g_svars]
         
         # generate operation

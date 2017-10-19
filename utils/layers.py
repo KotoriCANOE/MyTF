@@ -111,19 +111,17 @@ def PReLU(last, data_format='NHWC', collection=None):
     alpha = get_variable('alpha', shape, tf.zeros_initializer(), collection)
     if data_format != 'NCHW':
         alpha = tf.squeeze(alpha, axis=[-2, -1])
-        #alpha = tf.expand_dims(tf.expand_dims(alpha, -1), -1)
     return tf.maximum(0.0, last) + alpha * tf.minimum(0.0, last)
 
 def SelectionUnit(last, data_format='NHWC', collection=None):
     with tf.variable_scope('selection_unit') as scope:
         skip = last
         last = tf.nn.relu(last)
-        last = conv2d(last, ksize=1, out_channels=None,
-            stride=1, padding='SAME', data_format=data_format,
-            batch_norm=None, is_training=False, activation=None,
-            initializer=4, init_factor=1.0,
-            collection=collection)
-        last = tf.sigmoid(last)
+        with tf.variable_scope('pointwise_conv') as scope:
+            last = conv2d(last, ksize=1, out_channels=None,
+                stride=1, padding='SAME', data_format=data_format,
+                batch_norm=None, is_training=False, activation='sigmoid',
+                initializer=4, init_factor=2.0, wd=None, collection=collection)
         return tf.multiply(skip, last)
 
 def SqueezeExcitation(last, channels=None, channel_r=1, data_format='NHWC', collection=None):
@@ -155,11 +153,34 @@ def SqueezeExcitation(last, channels=None, channel_r=1, data_format='NHWC', coll
             last = tf.expand_dims(last, -2)
         return tf.multiply(skip, last)
 
+def SqueezeExcitationConv2D(last, channels=None, channel_r=1, data_format='NHWC', collection=None):
+    shape = helper.dim2int(last.get_shape())
+    in_channels = shape[-3] if data_format == 'NCHW' else shape[-1]
+    if channels is None: channels = in_channels
+    channels //= channel_r
+    with tf.variable_scope('squeeze_excitation_conv2d') as scope:
+        skip = last
+        with tf.variable_scope('depthwise_conv') as scope:
+            last = depthwise_conv2d(last, ksize=13, channel_multiplier=1,
+                stride=1, padding='SAME', data_format=data_format,
+                batch_norm=None, is_training=False, activation='relu',
+                initializer=4, init_factor=2.0, wd=None, collection=collection)
+        with tf.variable_scope('pointwise_conv') as scope:
+            last = conv2d(last, ksize=1, out_channels=None,
+                stride=1, padding='SAME', data_format=data_format,
+                batch_norm=None, is_training=False, activation='sigmoid',
+                initializer=4, init_factor=2.0, wd=None, collection=collection)
+        return tf.multiply(skip, last)
+
 def apply_activation(last, activation, data_format='NHWC', collection=None):
     if isinstance(activation, str):
         activation = activation.lower()
     if activation and activation != 'none':
-        if activation == 'relu':
+        if activation == 'sigmoid':
+            last = tf.sigmoid(last)
+        elif activation == 'tanh':
+            last = tf.tanh(last)
+        elif activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':
             last = PReLU(last, data_format, collection)
@@ -177,7 +198,7 @@ def apply_activation(last, activation, data_format='NHWC', collection=None):
             last = SelectionUnit(last, data_format, collection)
         elif activation[0:2] == 'se':
             channel_r = activation[2:]
-            if channel_r: channel_r = float(channel_r)
+            if channel_r: channel_r = int(channel_r)
             else: channel_r = 1
             last = SqueezeExcitation(last, None, channel_r, data_format, collection)
         else:
@@ -188,7 +209,7 @@ def apply_activation(last, activation, data_format='NHWC', collection=None):
 def conv2d(last, ksize, out_channels=None,
            stride=1, padding='SAME', data_format='NHWC',
            batch_norm=None, is_training=False, activation=None,
-           initializer=1, init_factor=1.0, wd=None, collection=None):
+           initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     if out_channels is None: out_channels = in_channels
@@ -215,7 +236,7 @@ def conv2d(last, ksize, out_channels=None,
 def depthwise_conv2d(last, ksize, channel_multiplier=1,
                      stride=1, padding='SAME', data_format='NHWC',
                      batch_norm=None, is_training=False, activation=None,
-                     initializer=1, init_factor=1.0, wd=None, collection=None):
+                     initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     out_channels = in_channels * channel_multiplier
@@ -242,7 +263,7 @@ def depthwise_conv2d(last, ksize, channel_multiplier=1,
 def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
                      stride=1, padding='SAME', data_format='NHWC',
                      batch_norm=None, is_training=False, activation=None,
-                     initializer=1, init_factor=1.0, wd=None, collection=None):
+                     initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     temp_channels = in_channels * channel_multiplier
@@ -276,7 +297,7 @@ def separable_conv2d(last, ksize, channel_multiplier=1, out_channels=None,
 def resize_conv2d(last, ksize, out_channels=None,
                   scaling=2, data_format='NHWC',
                   batch_norm=None, is_training=False, activation=None,
-                  initializer=1, init_factor=1.0, wd=None, collection=None):
+                  initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     if out_channels is None: out_channels = in_channels
@@ -324,7 +345,7 @@ def resize_conv2d(last, ksize, out_channels=None,
 def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
                             scaling=2, data_format='NHWC',
                             batch_norm=None, is_training=False, activation=None,
-                            initializer=1, init_factor=1.0, wd=None, collection=None):
+                            initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     out_channels = in_channels // channel_multiplier
@@ -365,103 +386,49 @@ def depthwise_resize_conv2d(last, ksize, channel_multiplier=1,
     last = apply_activation(last, activation, data_format, collection)
     return last
 
-# implementation of Periodic Shuffling for sub-pixel convolution
-# https://github.com/Tetrachrome/subpixel
-def _phase_shift(I, r, shape, data_format='NHWC'):
-    if data_format == 'NCHW':
-        N, H, W = tf.shape(I)[0], shape[2], shape[3]
-        X = tf.reshape(I, (N, r[0], r[1], H, W)) # N, rH, rW, H, W
-        X = tf.split(X, H, axis=-2) # H, [N, rH, rW, 1, W]
-        X = [tf.reshape(x, (N, r[1], r[0], W)) for x in X] # H, [N, rH, rW, W]
-        X = tf.concat(X, axis=-3) # N, H*rH, rW, W
-        X = tf.split(X, W, axis=-1) # W, [N, H*rH, rW, 1]
-        X = [tf.reshape(x, (N, H*r[0], r[1])) for x in X] # W, [N, H*rH, rW]
-        X = tf.concat(X, axis=-1) # N, H*rH, W*rW
-        return tf.reshape(X, (N, 1, H*r[0], W*r[1]))
-    else:
-        N, H, W = tf.shape(I)[0], shape[1], shape[2]
-        X = tf.reshape(I, (N, H, W, r[0], r[1])) # N, H, W, rH, rW
-        X = tf.split(X, H, axis=-4) # H, [N, 1, W, rH, rW]
-        X = [tf.reshape(x, (N, W, r[1], r[0])) for x in X] # H, [N, W, rH, rW]
-        X = tf.concat(X, axis=-2) # N, W, H*rH, rW
-        X = tf.split(X, W, axis=-3) # W, [N, 1, H*rH, rW]
-        X = [tf.reshape(x, (N, H*r[0], r[1])) for x in X] # W, [N, H*rH, rW]
-        X = tf.concat(X, axis=-1) # N, H*rH, W*rW
-        return tf.reshape(X, (N, H*r[0], W*r[1], 1))
-
-def periodic_shuffling(X, r, data_format='NHWC'):
-    # require statically known shape (None, H, W, C) or (None, C, H, W)
-    if isinstance(r, int) or isinstance(r, tf.Dimension):
-        r = [r, r]
-    shape = helper.dim2int(X.get_shape())
-    if data_format == 'NCHW':
-        channels = shape[-3] // (r[0] * r[1])
-        Xc = tf.split(X, channels, axis=-3)
-        shape[-3] = r[0] * r[1]
-        X = tf.concat([_phase_shift(x, r, shape, data_format) for x in Xc], axis=-3)
-    else:
-        channels = shape[-1] // (r[0] * r[1])
-        Xc = tf.split(X, channels, axis=-1)
-        shape[-1] = r[0] * r[1]
-        X = tf.concat([_phase_shift(x, r, shape, data_format) for x in Xc], axis=-1)
-    return X
-
 def subpixel_conv2d(last, ksize, out_channels=None,
                     scaling=2, padding='SAME', data_format='NHWC',
                     batch_norm=None, is_training=False, activation=None,
-                    initializer=1, init_factor=1.0, wd=None, collection=None):
+                    initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
     if out_channels is None: out_channels = in_channels
-    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
-        ksize = [ksize, ksize]
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
         scaling = [scaling, scaling]
     temp_channels = out_channels * scaling[0] * scaling[1]
     # convolution 2D
-    kshape = [ksize[0], ksize[1], in_channels, temp_channels]
-    kernel = conv2d_variable('weights', shape=kshape,
-                             initializer=initializer, init_factor=init_factor,
-                             wd=wd, collection=collection)
-    last = tf.nn.conv2d(last, kernel, strides=[1, 1, 1, 1],
-                        padding=padding, data_format=data_format)
-    biases = get_variable('biases', [temp_channels], tf.zeros_initializer())
-    last = tf.nn.bias_add(last, biases, data_format=data_format)
-    # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
-        data_format=data_format)
-    # activation function
-    last = apply_activation(last, activation, data_format, collection)
+    last = conv2d(last, ksize, out_channels=temp_channels,
+        stride=1, padding=padding, data_format=data_format,
+        batch_norm=batch_norm, is_training=is_training, activation=activation,
+        initializer=initializer, init_factor=init_factor, wd=wd, collection=collection)
     # periodic shuffling
-    last = periodic_shuffling(last, scaling, data_format)
+    #last = tf.depth_to_space(last, scaling[0], data_format=data_format)
+    if data_format == 'NCHW':
+        last = utils.image.NCHW2NHWC(last)
+    last = tf.depth_to_space(last, scaling[0])
+    if data_format == 'NCHW':
+        last = utils.image.NHWC2NCHW(last)
     return last
 
 def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
                               scaling=2, padding='SAME', data_format='NHWC',
                               batch_norm=None, is_training=False, activation=None,
-                              initializer=1, init_factor=1.0, wd=None, collection=None):
+                              initializer=4, init_factor=2.0, wd=None, collection=None):
     # parameters
     in_channels = last.get_shape()[-3 if data_format == 'NCHW' else -1]
-    if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
-        ksize = [ksize, ksize]
     if isinstance(scaling, int) or isinstance(scaling, tf.Dimension):
         scaling = [scaling, scaling]
     channel_multiplier *= scaling[0] * scaling[1]
-    out_channels = in_channels * channel_multiplier
     # convolution 2D
-    depthwise_kshape = [ksize[0], ksize[1], in_channels, channel_multiplier]
-    depthwise_kernel = conv2d_variable('depthwise_weights', shape=depthwise_kshape,
-                                       initializer=initializer, init_factor=init_factor,
-                                       wd=wd, collection=collection)
-    last = tf.nn.depthwise_conv2d_native(last, depthwise_kernel, strides=[1, 1, 1, 1],
-                                         padding=padding, data_format=data_format)
-    biases = get_variable('biases', [out_channels], tf.zeros_initializer())
-    last = tf.nn.bias_add(last, biases, data_format=data_format)
-    # batch normalization
-    last = apply_batch_norm(last, decay=batch_norm, is_training=is_training,
-        data_format=data_format)
-    # activation function
-    last = apply_activation(last, activation, data_format, collection)
+    last = depthwise_conv2d(last, ksize, channel_multiplier=channel_multiplier,
+        stride=1, padding=padding, data_format=data_format,
+        batch_norm=batch_norm, is_training=is_training, activation=activation,
+        initializer=initializer, init_factor=init_factor, wd=wd, collection=collection)
     # periodic shuffling
-    last = periodic_shuffling(last, scaling, data_format)
+    #last = tf.depth_to_space(last, scaling[0], data_format=data_format)
+    if data_format == 'NCHW':
+        last = utils.image.NCHW2NHWC(last)
+    last = tf.depth_to_space(last, scaling[0])
+    if data_format == 'NCHW':
+        last = utils.image.NHWC2NCHW(last)
     return last

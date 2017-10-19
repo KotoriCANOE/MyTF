@@ -54,13 +54,15 @@ tf.app.flags.DEFINE_boolean('pre_down', False,
                             """Pre-downscale large image for (probably) higher quality data.""")
 tf.app.flags.DEFINE_float('color_augmentation', 0.05,
                             """Amount of random color augmentations.""")
+tf.app.flags.DEFINE_integer('multistage_resize', 0,
+                            """Apply resizer (n * 2 + 1) times to simulate more complex filtered data.""")
 tf.app.flags.DEFINE_float('random_resizer', 0,
                             """value for resizer choice, 0 for random resizer.""")
 tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
-tf.app.flags.DEFINE_boolean('jpeg_coding', True,
+tf.app.flags.DEFINE_float('jpeg_coding', 1.0,
                             """Using JPEG to generate compression artifacts for data.""")
 
 # helper class
@@ -111,7 +113,6 @@ def train():
     
     # validation set
     if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
-        MAX_VAL_WINDOW = 50
         val_size = min(FLAGS.batch_size * 50, epoch_size // (10 * FLAGS.batch_size) * FLAGS.batch_size)
         val_batches = val_size // FLAGS.batch_size
         val_files = files[: : (epoch_size + val_size - 1) // val_size]
@@ -124,8 +125,7 @@ def train():
                 val_lr, val_hr = inputs(FLAGS, val_files, is_training=True)
             # session
             gpu_options = tf.GPUOptions(allow_growth=True)
-            config = tf.ConfigProto(gpu_options=gpu_options,
-                log_device_placement=FLAGS.log_device_placement)
+            config = tf.ConfigProto(gpu_options=gpu_options)
             with tf.Session(config=config) as sess:
                 for _ in range(val_batches):
                     _lr, _hr = sess.run((val_lr, val_hr))
@@ -147,14 +147,33 @@ def train():
         g_loss = model.build_train(images_lr, images_hr)
         
         # lr decay operator
-        if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
-            lr_decay_op = model.lr_decay()
+        def _get_val_window(lr, lr_last, lr_decay_op):
             val_window = tf.Variable(10.0, trainable=False, dtype=tf.float64,
                 name='validation_window_size')
-            val_window_inc = 12.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
-            val_window_inc = tf.Variable(val_window_inc, trainable=False, dtype=tf.float64)
-            val_window_inc = tf.assign(val_window_inc, val_window_inc * 0.9, use_locking=True)
-            val_window_inc = tf.assign_add(val_window, val_window_inc, use_locking=True)
+            val_window_inc_base = 10.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
+            val_window_inc = tf.Variable(val_window_inc_base, trainable=False, dtype=tf.float64)
+            tf.summary.scalar('val_window', val_window)
+            tf.summary.scalar('val_window_inc', val_window_inc)
+            with tf.control_dependencies([lr_decay_op]):
+                def f1_t(): # lr > learning_rate * 0.1
+                    return tf.assign(val_window_inc, val_window_inc * 0.9, use_locking=True)
+                def f2_t(): # lr_last > learning_rate * 0.1 >= lr
+                    '''
+                    val_window_op = tf.assign(val_window, val_window * 1.3, use_locking=True)
+                    with tf.control_dependencies([val_window_op]):
+                        return tf.assign(val_window_inc, val_window_inc * 1.6, use_locking=True)
+                    '''
+                    return tf.assign(val_window_inc, val_window_inc_base, use_locking=True)
+                def f2_f(): # learning_rate * 0.1 >= lr_last
+                    return tf.assign(val_window_inc, val_window_inc * 0.95, use_locking=True)
+                val_window_inc = tf.cond(lr > FLAGS.learning_rate * 0.1, f1_t,
+                    lambda: tf.cond(lr_last > FLAGS.learning_rate * 0.1, f2_t, f2_f))
+                val_window_op = tf.assign_add(val_window, val_window_inc, use_locking=True)
+            return val_window, val_window_op
+        
+        if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
+            g_lr_decay_op = model.lr_decay()
+            val_window, val_window_op = _get_val_window(model.g_lr, model.g_lr_last, g_lr_decay_op)
         
         # training step and op
         global_step = tf.train.get_or_create_global_step()
@@ -165,8 +184,7 @@ def train():
             max_to_keep=1 << 16, save_relative_paths=True)
         
         if FLAGS.pretrain_dir and not FLAGS.restore:
-            g_svars = list(set(model.g_tvars + model.g_mvars))
-            saver0 = tf.train.Saver(var_list=g_svars)
+            saver0 = tf.train.Saver(var_list=model.g_rvars)
         
         # save the graph
         saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
@@ -193,7 +211,7 @@ def train():
                 saver0.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
             # get variables
             val_window_ = sess.run(val_window)
-            val_window_ = min(MAX_VAL_WINDOW, int(np.round(val_window_)))
+            val_window_ = int(np.round(val_window_))
             lr_decay_last = val_window_
             # training session call
             def run_sess(options=None, run_metadata=None):
@@ -232,15 +250,15 @@ def train():
                         def _mean(array, percent=0.1):
                             clip = int(np.round(len(array) * percent))
                             return np.mean(np.sort(array)[clip : -clip if clip > 0 else None])
-                        val_current = _mean(val_current), np.median(val_current), np.min(val_current)
-                        val_previous = _mean(val_previous), np.median(val_previous), np.min(val_previous)
+                        val_current = np.mean(val_current), np.median(val_current), np.min(val_current)
+                        val_previous = np.mean(val_previous), np.median(val_previous), np.min(val_previous)
                         print('    statistics of {} losses (mean | median | min)'.format(val_window_))
                         print('        previous: {}'.format(val_previous))
                         print('        current:  {}'.format(val_current))
-                        if val_current[0] >= val_previous[0] and val_current[1] >= val_previous[1]:
+                        if val_current[0] + val_current[1] >= val_previous[0] + val_previous[1]:
                             lr_decay_last = len(val_losses)
-                            val_window_, lr_ = sess.run((val_window_inc, lr_decay_op))
-                            val_window_ = min(MAX_VAL_WINDOW, int(np.round(val_window_)))
+                            val_window_, lr_ = sess.run((val_window_op, g_lr_decay_op))
+                            val_window_ = int(np.round(val_window_))
                             print('    learning rate decayed to {}'.format(lr_))
 
 # main
