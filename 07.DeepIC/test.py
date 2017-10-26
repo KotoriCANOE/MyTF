@@ -34,9 +34,9 @@ tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_integer('patch_height', 256,
+tf.app.flags.DEFINE_integer('patch_height', 512,
                             """Block size y.""")
-tf.app.flags.DEFINE_integer('patch_width', 256,
+tf.app.flags.DEFINE_integer('patch_width', 512,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Batch size.""")

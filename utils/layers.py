@@ -4,6 +4,20 @@ import tensorflow as tf
 from utils import helper
 import utils.image
 
+def convert_range(x, range_in, range_out, saturate=None):
+    scale = (range_out[1] - range_out[0]) / (range_in[1] - range_in[0])
+    bias = range_out[0] - range_in[0] * scale
+    y = x * scale + bias
+    if saturate:
+        y = tf.clip_by_value(y, range_out[0], range_out[1])
+    return y
+
+def quantize(x, range_in, range_out, saturate=None):
+    graph = tf.get_default_graph()
+    grad_map = {'Round': 'Identity'}
+    with graph.gradient_override_map(grad_map):
+        return tf.round(convert_range(x, range_in, range_out, saturate))
+
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the
 # names of the summaries when visualizing a model.
@@ -180,6 +194,8 @@ def apply_activation(last, activation, data_format='NHWC', collection=None):
             last = tf.sigmoid(last)
         elif activation == 'tanh':
             last = tf.tanh(last)
+        elif activation == 'swish':
+            last = last * tf.sigmoid(last)
         elif activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':

@@ -2,6 +2,7 @@ import sys
 import tensorflow as tf
 sys.path.append('..')
 from utils import layers
+import utils.image
 
 # basic parameters
 tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
@@ -26,15 +27,15 @@ tf.app.flags.DEFINE_integer('k_first', 3,
                             """Kernel size for the first layer.""")
 tf.app.flags.DEFINE_integer('k_last', 3,
                             """Kernel size for the last layer.""")
-tf.app.flags.DEFINE_integer('e_depth', 5,
+tf.app.flags.DEFINE_integer('e_depth', 6,
                             """Depth of the network: number of layers, residual blocks, etc.""")
-tf.app.flags.DEFINE_integer('d_depth', 5,
+tf.app.flags.DEFINE_integer('d_depth', 6,
                             """Depth of the network: number of layers, residual blocks, etc.""")
-tf.app.flags.DEFINE_integer('channels', 64,
+tf.app.flags.DEFINE_integer('channels', 48,
                             """Number of features in hidden layers.""")
-tf.app.flags.DEFINE_float('batch_norm', 0.99,
+tf.app.flags.DEFINE_float('batch_norm', 0.999,
                             """Moving average decay for Batch Normalization.""")
-tf.app.flags.DEFINE_string('activation', 'su',
+tf.app.flags.DEFINE_string('activation', 'swish',
                             """Activation function used.""")
 
 # training parameters
@@ -148,9 +149,19 @@ class ICmodel(object):
                         collection=weight_key)
                 # encoder - residual blocks
                 depth = 0
-                skip2 = last
                 while depth < self.e_depth:
                     depth += 1
+                    skip2 = last
+                    downscale = depth % 3 == 1
+                    if downscale:
+                        channels *= 4
+                        with tf.variable_scope('trans{}'.format(l)) as scope:
+                            if data_format == 'NCHW':
+                                last = utils.image.NCHW2NHWC(last)
+                            last = tf.space_to_depth(last, 2)
+                            if data_format == 'NCHW':
+                                last = utils.image.NHWC2NCHW(last)
+                        channels //= 2
                     l += 1
                     with tf.variable_scope('conv{}'.format(l)) as scope:
                         last = layers.apply_batch_norm(last, decay=batch_norm,
@@ -174,30 +185,32 @@ class ICmodel(object):
                             initializer=initializer, init_factor=init_activation,
                             collection=weight_key)
                     with tf.variable_scope('skip_connection{}'.format(l)) as scope:
+                        if downscale:
+                            pool_size = [1, 1, 2, 2] if data_format == 'NCHW' else [1, 2, 2, 1]
+                            skip2 = tf.nn.avg_pool(skip2, pool_size, pool_size,
+                                padding='SAME', data_format=data_format)
+                            padding = [[0, 0], [0, 0], [0, 0], [0, 0]]
+                            padding[-3 if data_format == 'NCHW' else -1] = [0, channels // 2]
+                            skip2 = tf.pad(skip2, padding)
                         last = layers.SqueezeExcitation(last, channel_r=1,
                             data_format=data_format, collection=weight_key)
                         last = tf.add(last, skip2)
-                        skip2 = last
-                # encoder - compress
+                # encoder - final conv layer
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.conv2d(last, ksize=self.k_last, out_channels=self.image_channels,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation='sigmoid',
+                        batch_norm=None, is_training=is_training, activation='tanh',
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
-            # quantization
-            with tf.variable_scope('quantization') as scope:
-                last = last * (1 + self.qp_range) - self.qp_range
-                last = tf.nn.relu(last)
             # encoded images
+            last = layers.quantize(last, [-1, 1], [0, 255], saturate=False)
             self.images_enc = last
-            # dequantization
-            with tf.variable_scope('dequantization') as scope:
-                pass
+            last = layers.convert_range(last, [0, 255], [-1, 1], saturate=False)
             # decoder
-            with tf.variable_scope('encoder') as scope:
-                # decoder - decompress
+            with tf.variable_scope('decoder') as scope:
+                # decoder - first conv layer
+                channels //= 2
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.conv2d(last, ksize=self.k_first, out_channels=channels,
@@ -236,7 +249,22 @@ class ICmodel(object):
                         last = layers.SqueezeExcitation(last, channel_r=1,
                             data_format=data_format, collection=weight_key)
                         last = tf.add(last, skip2)
-                        skip2 = last
+                # sub-pixel conv layer
+                channels //= 2
+                l += 1
+                with tf.variable_scope('subpixel_conv{}'.format(l)) as scope:
+                    last = layers.subpixel_conv2d(last, ksize=3, out_channels=channels,
+                        scaling=2, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=activation,
+                        initializer=initializer, init_factor=init_activation,
+                        collection=weight_key)
+                l += 1
+                with tf.variable_scope('subpixel_conv{}'.format(l)) as scope:
+                    last = layers.subpixel_conv2d(last, ksize=3, out_channels=channels,
+                        scaling=2, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=activation,
+                        initializer=initializer, init_factor=init_activation,
+                        collection=weight_key)
                 # decoder - final conv layer
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -265,8 +293,10 @@ class ICmodel(object):
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
             # quantization loss
+            '''
             sparsity = tf.count_nonzero(enc, dtype=tf.float32) / tf.cast(tf.reduce_prod(tf.shape(enc)), tf.float32)
             tf.losses.add_loss(sparsity, loss_collection=collection)
+            '''
             # L1 loss
             weights1 *= 1 - alpha
             weights2 *= alpha
@@ -299,8 +329,8 @@ class ICmodel(object):
         self.images_dec = self.generator(self.images_src, is_training=is_training)
         
         # encoded images
-        #tf.multiply(self.images_enc + 1, 0.5, name='Encoded')
-        tf.identity(self.images_enc, name='Encoded')
+        tf.multiply(self.images_enc + 1, 0.5, name='Encoded')
+        #tf.identity(self.images_enc, name='Encoded')
 
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:
