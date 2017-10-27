@@ -2,6 +2,7 @@ import sys
 import tensorflow as tf
 sys.path.append('..')
 from utils import layers
+from utils import helper
 import utils.image
 
 # basic parameters
@@ -112,6 +113,9 @@ class ICmodel(object):
         self.generator_weight_key = 'generator_weights'
         self.generator_loss_key = 'generator_losses'
         self.generator_total_loss_key = 'generator_total_loss'
+        self.discriminator_weight_key = 'discriminator_weights'
+        self.discriminator_loss_key = 'discriminator_losses'
+        self.discriminator_total_loss_key = 'discriminator_total_loss'
         
         self.dtype = tf.float16 if self.use_fp16 else tf.float32
         if self.data_format == 'NCHW':
@@ -122,7 +126,7 @@ class ICmodel(object):
             self.shape_dec = [self.batch_size, self.output_height, self.output_width, self.image_channels]
     
     def generator(self, images_src, is_training=False, reuse=None):
-        print('k_first={}, k_last={}, e_depth={}, d_depth={}, channels={}'.format(
+        print('generator: k_first={}, k_last={}, e_depth={}, d_depth={}, channels={}'.format(
             self.k_first, self.k_last, self.e_depth, self.d_depth, self.channels))
         # parameters
         data_format = self.data_format
@@ -272,7 +276,118 @@ class ICmodel(object):
         print('Generator: totally {} convolutional layers.'.format(l))
         return last
     
-    def generator_losses(self, ref, pred, enc, alpha=0.10, weights1=1.0, weights2=1.0):
+    def discriminator(self, images_enc, is_training=False, reuse=None):
+        # parameters
+        data_format = self.data_format
+        d_depth = 8
+        channels = 16
+        batch_norm = 0.99
+        activation = 'swish'
+        initializer = 4
+        init_factor = 1.0
+        init_activation = 2.0
+        weight_key = self.discriminator_weight_key
+        # initialization
+        last = images_enc
+        l = 0
+        with tf.variable_scope('discriminator', reuse=reuse) as scope:
+            # first conv layer
+            l += 1
+            with tf.variable_scope('conv{}'.format(l)) as scope:
+                last = layers.conv2d(last, ksize=3, out_channels=channels,
+                    stride=1, padding='SAME', data_format=data_format,
+                    batch_norm=None, is_training=is_training, activation=None,
+                    initializer=initializer, init_factor=init_activation,
+                    collection=weight_key)
+            # residual blocks
+            depth = 0
+            while depth < d_depth:
+                depth += 1
+                skip2 = last
+                downscale = depth % 2 == 1
+                if downscale:
+                    channels *= 4
+                    with tf.variable_scope('trans{}'.format(l)) as scope:
+                        if data_format == 'NCHW':
+                            last = utils.image.NCHW2NHWC(last)
+                        last = tf.space_to_depth(last, 2)
+                        if data_format == 'NCHW':
+                            last = utils.image.NHWC2NCHW(last)
+                    channels //= 2
+                l += 1
+                with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                        data_format=data_format, collection=weight_key)
+                    last = layers.conv2d(last, ksize=3, out_channels=channels,
+                        stride=1, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=None,
+                        initializer=initializer, init_factor=init_activation,
+                        collection=weight_key)
+                l += 1
+                with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                        data_format=data_format, collection=weight_key)
+                    last = layers.conv2d(last, ksize=3, out_channels=channels,
+                        stride=1, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=None,
+                        initializer=initializer, init_factor=init_activation,
+                        collection=weight_key)
+                with tf.variable_scope('skip_connection{}'.format(l)) as scope:
+                    if downscale:
+                        pool_size = [1, 1, 2, 2] if data_format == 'NCHW' else [1, 2, 2, 1]
+                        skip2 = tf.nn.avg_pool(skip2, pool_size, pool_size,
+                            padding='SAME', data_format=data_format)
+                        padding = [[0, 0], [0, 0], [0, 0], [0, 0]]
+                        padding[-3 if data_format == 'NCHW' else -1] = [0, channels // 2]
+                        skip2 = tf.pad(skip2, padding)
+                    last = layers.SqueezeExcitation(last, channel_r=1,
+                        data_format=data_format, collection=weight_key)
+                    last = tf.add(last, skip2)
+            # space to depth (4096)
+            channels *= 16
+            with tf.variable_scope('trans{}'.format(l)) as scope:
+                if data_format == 'NCHW':
+                    last = utils.image.NCHW2NHWC(last)
+                last = tf.space_to_depth(last, 4)
+                if data_format == 'NCHW':
+                    last = utils.image.NHWC2NCHW(last)
+                last = tf.contrib.layers.flatten(last)
+            # dense layers (1024)
+            channels //= 4
+            l += 1
+            with tf.variable_scope('dense{}'.format(l)) as scope:
+                last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
+                last = layers.apply_activation(last, activation='swish',
+                    data_format=data_format, collection=weight_key)
+            # dense layers (1024)
+            channels //= 1
+            l += 1
+            with tf.variable_scope('dense{}'.format(l)) as scope:
+                last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
+                last = layers.apply_activation(last, activation='swish',
+                    data_format=data_format, collection=weight_key)
+            # dense layers (1024)
+            channels //= 1
+            l += 1
+            with tf.variable_scope('dense{}'.format(l)) as scope:
+                last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
+                last = layers.apply_activation(last, activation='swish',
+                    data_format=data_format, collection=weight_key)
+            # dense layers (1)
+            channels = 1
+            l += 1
+            with tf.variable_scope('dense{}'.format(l)) as scope:
+                last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
+                last = layers.apply_activation(last, activation='sigmoid',
+                    data_format=data_format, collection=weight_key)
+            # return estimate
+            return last
+
+    def generator_losses(self, ref, pred, comp_pred, alpha=0.10, weights1=1.0, weights2=1.0):
         import utils.image
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
@@ -287,9 +402,9 @@ class ICmodel(object):
                         tf.get_collection(self.generator_weight_key)])
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
-            # quantization entropy
-            entropy = layers.entropy(enc, [0, 256], 256, saturate=False)
-            tf.losses.add_loss(entropy, loss_collection=collection)
+            # compression ratio
+            comp_pred = tf.reduce_mean(comp_pred)
+            tf.losses.add_loss(comp_pred, loss_collection=collection)
             # L1 loss
             weights1 *= 1 - alpha
             weights2 *= alpha
@@ -308,6 +423,30 @@ class ICmodel(object):
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
                             name=self.generator_total_loss_key)
     
+    def discriminator_losses(self, enc_u8, comp_pred):
+        collection = self.discriminator_loss_key
+        with tf.variable_scope('discriminator_losses') as scope:
+            # L2 regularization weight decay
+            if self.weight_decay > 0:
+                with tf.variable_scope('l2_regularize') as scope:
+                    l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
+                        tf.get_collection(self.discriminator_weight_key)])
+                    l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
+                    tf.losses.add_loss(l2_regularize, loss_collection=collection)
+            # get reference compression ratio
+            pngs = []
+            enc_u8 = utils.image.NCHW2NHWC(enc_u8)
+            for _ in range(self.batch_size):
+                pngs.append(tf.image.encode_png(enc_u8[_], compression=None))
+            pngs_length = helper.string_length(tf.stack(pngs, axis=0))
+            comp_ratio = tf.cast(pngs_length, tf.float32) / tf.cast(tf.reduce_prod(tf.shape(enc_u8[0])), tf.float32)
+            # L1 loss
+            mad = tf.losses.absolute_difference(comp_ratio, comp_pred,
+                weights=1.0, loss_collection=collection, scope='MAD_loss')
+            # return total loss
+            return tf.add_n(tf.losses.get_losses(loss_collection=collection),
+                            name=self.discriminator_total_loss_key)
+
     def build_model(self, images_src=None, is_training=False):
         # set inputs
         if images_src is None:
@@ -322,7 +461,7 @@ class ICmodel(object):
         self.images_dec = self.generator(self.images_src, is_training=is_training)
         
         # encoded images
-        tf.cast(self.images_enc, tf.uint8, name='Encoded')
+        self.images_enc_u8 = tf.cast(self.images_enc, tf.uint8, name='Encoded')
 
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:
@@ -348,15 +487,26 @@ class ICmodel(object):
     def build_train(self, images_src=None):
         # build generator
         self.build_model(images_src, is_training=True)
+
+        # build discriminator
+        comp_pred = self.discriminator(self.images_enc, is_training=True)
+        
+        # discriminator - trainable and model variables
+        self.d_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator')
+        self.d_mvars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='discriminator')
+        self.d_svars = list(set(self.d_tvars + self.d_mvars))
         
         # build generator losses
-        self.g_loss = self.generator_losses(self.images_src, self.images_dec, self.images_enc)
+        self.g_loss = self.generator_losses(self.images_src, self.images_dec, comp_pred)
+
+        # build discriminator losses
+        self.d_loss = self.discriminator_losses(self.images_enc_u8, comp_pred)
         
         # set learning rate
         self.g_lr = tf.Variable(self.learning_rate, trainable=False, name='generator_lr')
         
         # return total loss(es)
-        return self.g_loss
+        return self.g_loss, self.d_loss
     
     def lr_decay(self):
         self.g_lr_last = tf.Variable(self.g_lr, trainable=False)
@@ -377,8 +527,9 @@ class ICmodel(object):
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         
         # generate moving averages of all losses and associated summaries
-        losses = [self.g_loss]
-        losses += tf.losses.get_losses(loss_collection=self.generator_loss_key)
+        losses = [self.g_loss, self.d_loss]
+        losses += tf.losses.get_losses(loss_collection=self.generator_loss_key
+            + self.discriminator_loss_key)
         loss_averages_op = layers.loss_summaries(losses, self.loss_moving_average)
         if loss_averages_op: update_ops.append(loss_averages_op)
         
@@ -399,12 +550,14 @@ class ICmodel(object):
         # compute gradients
         with tf.control_dependencies(update_ops):
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, self.g_tvars)
+            d_grads_and_vars = g_opt.compute_gradients(self.d_loss, self.d_tvars)
         
         # apply gradients
         g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
+        g_train_ops.append(g_opt.apply_gradients(d_grads_and_vars))
         
         # add histograms for gradients
-        for grad, var in g_grads_and_vars:
+        for grad, var in g_grads_and_vars + d_grads_and_vars:
             if grad is not None:
                 tf.summary.histogram(var.op.name + '/gradients', grad)
             if var is not None:

@@ -40,7 +40,7 @@ tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_integer('log_frequency', 5000,
+tf.app.flags.DEFINE_integer('log_frequency', 500,
                             """Log frequency.""")
 tf.app.flags.DEFINE_integer('patch_height', 64,
                             """Block size y.""")
@@ -93,9 +93,9 @@ class LoggerHook(tf.train.SessionRunHook):
             examples_per_sec = FLAGS.log_frequency * FLAGS.batch_size / duration
             sec_per_batch = float(duration / FLAGS.log_frequency)
 
-            format_str = '{}: epoch {}, step {}, g_loss = {:.5} ({:.0f} samples/sec; {:.3f} sec/batch)'
+            format_str = '{}: epoch {}, step {}, g_loss = {:.5}, d_loss = {:.5} ({:.0f} samples/sec; {:.3f} sec/batch)'
             print(format_str.format(datetime.now(), self._epoch, self._step,
-                                    loss, examples_per_sec, sec_per_batch))
+                                    *loss, examples_per_sec, sec_per_batch))
 
 # training
 def train():
@@ -140,9 +140,10 @@ def train():
         model = ICmodel(FLAGS, data_format=FLAGS.data_format,
             input_range=FLAGS.input_range, output_range=FLAGS.output_range,
             qp_range=FLAGS.qp_range, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
-            image_channels=FLAGS.image_channels)
+            image_channels=FLAGS.image_channels, input_height=FLAGS.patch_height,
+            input_width=FLAGS.patch_width, batch_size=FLAGS.batch_size)
         
-        g_loss = model.build_train(images_src)
+        g_loss, d_loss = model.build_train(images_src)
         
         # lr decay operator
         def _get_val_window(lr, lr_last, lr_decay_op):
@@ -192,7 +193,8 @@ def train():
                 checkpoint_dir=FLAGS.train_dir,
                 hooks=[tf.train.StopAtStepHook(last_step=max_steps),
                        tf.train.NanTensorHook(g_loss),
-                       LoggerHook(g_loss, steps_per_epoch)],
+                       tf.train.NanTensorHook(d_loss),
+                       LoggerHook([g_loss, d_loss], steps_per_epoch)],
                 config=config, log_step_count_steps=FLAGS.log_frequency) as mon_sess:
             # options
             sess = helper.get_session(mon_sess)

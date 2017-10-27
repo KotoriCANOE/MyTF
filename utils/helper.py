@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 
 # stderr print
 def eprint(*args, **kwargs):
@@ -61,6 +62,17 @@ def get_session(mon_sess):
         #pylint: disable=W0212
         session = session._sess
     return session
+
+# return the string length(s) in a Tensor of Strings
+def string_length(t):
+    def _func(p):
+        is_array = isinstance(p, np.ndarray)
+        if is_array:
+            return np.stack([len(_) for _ in p])
+        else:
+            return len(p)
+    l = tf.py_func(_func, [t], [tf.int32])
+    return l[0]
 
 # reading images using FIFOQueue within tensorflow graph
 def ImageReader(files, channels=0, shuffle=False):
