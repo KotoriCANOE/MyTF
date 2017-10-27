@@ -76,7 +76,7 @@ def BatchPNG(images, batch_size, dtype=tf.uint8):
     pngs = []
     for i in range(batch_size):
         img = images[i]
-        img = tf.image.convert_image_dtype(img, dtype, saturate=True)
+        if img.dtype != tf.uint8: img = tf.image.convert_image_dtype(img, dtype, saturate=True)
         png = tf.image.encode_png(img, compression=9)
         pngs.append(png)
     return pngs

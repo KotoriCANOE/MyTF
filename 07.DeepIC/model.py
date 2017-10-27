@@ -152,7 +152,7 @@ class ICmodel(object):
                 while depth < self.e_depth:
                     depth += 1
                     skip2 = last
-                    downscale = depth % 3 == 1
+                    downscale = False#depth == 4
                     if downscale:
                         channels *= 4
                         with tf.variable_scope('trans{}'.format(l)) as scope:
@@ -210,7 +210,7 @@ class ICmodel(object):
             # decoder
             with tf.variable_scope('decoder') as scope:
                 # decoder - first conv layer
-                channels //= 2
+                channels //= 1
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.conv2d(last, ksize=self.k_first, out_channels=channels,
@@ -249,6 +249,7 @@ class ICmodel(object):
                         last = layers.SqueezeExcitation(last, channel_r=1,
                             data_format=data_format, collection=weight_key)
                         last = tf.add(last, skip2)
+                '''
                 # sub-pixel conv layer
                 channels //= 2
                 l += 1
@@ -258,13 +259,7 @@ class ICmodel(object):
                         batch_norm=None, is_training=is_training, activation=activation,
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
-                l += 1
-                with tf.variable_scope('subpixel_conv{}'.format(l)) as scope:
-                    last = layers.subpixel_conv2d(last, ksize=3, out_channels=channels,
-                        scaling=2, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation=activation,
-                        initializer=initializer, init_factor=init_activation,
-                        collection=weight_key)
+                '''
                 # decoder - final conv layer
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -292,11 +287,9 @@ class ICmodel(object):
                         tf.get_collection(self.generator_weight_key)])
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
-            # quantization loss
-            '''
-            sparsity = tf.count_nonzero(enc, dtype=tf.float32) / tf.cast(tf.reduce_prod(tf.shape(enc)), tf.float32)
-            tf.losses.add_loss(sparsity, loss_collection=collection)
-            '''
+            # quantization entropy
+            entropy = layers.entropy(enc, [0, 256], 256, saturate=False)
+            tf.losses.add_loss(entropy, loss_collection=collection)
             # L1 loss
             weights1 *= 1 - alpha
             weights2 *= alpha
@@ -329,8 +322,7 @@ class ICmodel(object):
         self.images_dec = self.generator(self.images_src, is_training=is_training)
         
         # encoded images
-        tf.multiply(self.images_enc + 1, 0.5, name='Encoded')
-        #tf.identity(self.images_enc, name='Encoded')
+        tf.cast(self.images_enc, tf.uint8, name='Encoded')
 
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:

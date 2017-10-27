@@ -4,6 +4,7 @@ import numpy as np
 import tensorflow as tf
 sys.path.append('..')
 from utils import helper
+from utils import layers
 import utils.image
 
 from input import inputs
@@ -77,8 +78,8 @@ def setup():
 
 # losses
 def get_losses(ref, pred, enc):
-    # quantization loss
-    sparsity = tf.count_nonzero(enc, dtype=tf.float32) / tf.cast(tf.reduce_prod(tf.shape(enc)), tf.float32)
+    # quantization entropy
+    entropy = layers.entropy(tf.cast(enc, tf.float32), [0, 256], 256, saturate=False)
 
     # RGB color space
     RGB_mse = tf.losses.mean_squared_error(ref, pred, weights=1.0)
@@ -91,7 +92,7 @@ def get_losses(ref, pred, enc):
     Y_ms_ssim = utils.image.MS_SSIM2(Y_ref, Y_pred, norm=True, data_format=FLAGS.data_format)
     
     # return each loss
-    return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim, sparsity
+    return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim, entropy
 
 # testing
 def test():
@@ -173,7 +174,7 @@ def test():
             print('No.{}'.format(FLAGS.postfix))
             mean_loss = [l / max_steps for l in sum_loss]
             psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-            print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}, Sparsity {}'.format(
+            print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}, Entropy {}'.format(
                    psnr, *mean_loss[1:]))
         
         # test progressively saved models

@@ -4,19 +4,51 @@ import tensorflow as tf
 from utils import helper
 import utils.image
 
-def convert_range(x, range_in, range_out, saturate=None):
+def convert_range(x, range_in, range_out, saturate=False):
     scale = (range_out[1] - range_out[0]) / (range_in[1] - range_in[0])
     bias = range_out[0] - range_in[0] * scale
+    scale = tf.constant(scale, x.dtype)
+    bias = tf.constant(bias, x.dtype)
     y = x * scale + bias
     if saturate:
         y = tf.clip_by_value(y, range_out[0], range_out[1])
     return y
 
-def quantize(x, range_in, range_out, saturate=None):
+def quantize(x, range_in, range_out, saturate=False, dtype=tf.int32):
     graph = tf.get_default_graph()
     grad_map = {'Round': 'Identity'}
     with graph.gradient_override_map(grad_map):
         return tf.round(convert_range(x, range_in, range_out, saturate))
+
+def histogram(x, range, bins, saturate=True, dtype=tf.float32):
+    graph = tf.get_default_graph()
+    grad_map = {'Floor': 'Identity', 'Cast': 'Identity'}
+    with graph.gradient_override_map(grad_map):
+        scale = bins / (range[1] - range[0])
+        bias = -range[0] * scale
+        scale = tf.constant(scale, x.dtype)
+        bias = tf.constant(bias, x.dtype)
+        indices = tf.floor(x * scale + bias)
+        if saturate:
+            indices = tf.clip_by_value(indices, 0, bins - 1)
+        indices = tf.cast(indices, tf.int32)
+        return tf.unsorted_segment_sum(tf.ones_like(indices, dtype=dtype), indices, bins)
+
+def entropy(x, range, bins, base=None, saturate=True, mean=False,
+            dtype=tf.float32, epsilon=1e-8):
+    if base is None: base = bins
+    x_num = tf.cast(tf.reduce_prod(tf.shape(x)), dtype)
+    #range = tf.constant(range, dtype=x.dtype)
+    #hist = tf.histogram_fixed_width(x, range, bins, dtype=dtype)
+    hist = histogram(x, range, bins, saturate, dtype)
+    probs = hist / x_num
+    ents = probs * tf.log(probs + epsilon)
+    if mean:
+        ent = tf.reduce_mean(ents)
+    else:
+        ent = tf.reduce_sum(ents)
+    ent *= -1 / np.log(base)
+    return ent
 
 # If a model is trained with multiple GPUs, prefix all Op names with tower_name
 # to differentiate the operations. Note that this prefix is removed from the
@@ -196,6 +228,10 @@ def apply_activation(last, activation, data_format='NHWC', collection=None):
             last = tf.tanh(last)
         elif activation == 'swish':
             last = last * tf.sigmoid(last)
+        elif activation == 'swish_mod1':
+            # http://kexue.fm/archives/4647/
+            # x * min(1, exp(x))
+            last = tf.maximum(x, x * tf.exp(tf.negative(tf.abs(x))))
         elif activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':
