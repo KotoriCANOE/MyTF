@@ -32,7 +32,7 @@ tf.app.flags.DEFINE_integer('e_depth', 6,
                             """Depth of the network: number of layers, residual blocks, etc.""")
 tf.app.flags.DEFINE_integer('d_depth', 6,
                             """Depth of the network: number of layers, residual blocks, etc.""")
-tf.app.flags.DEFINE_integer('channels', 48,
+tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
 tf.app.flags.DEFINE_float('batch_norm', 0.999,
                             """Moving average decay for Batch Normalization.""")
@@ -154,9 +154,9 @@ class ICmodel(object):
                 # encoder - residual blocks
                 depth = 0
                 while depth < self.e_depth:
+                    downscale = False#depth == (self.e_depth + 1) // 2
                     depth += 1
                     skip2 = last
-                    downscale = False#depth == 4
                     if downscale:
                         channels *= 4
                         with tf.variable_scope('trans{}'.format(l)) as scope:
@@ -280,7 +280,7 @@ class ICmodel(object):
         # parameters
         data_format = self.data_format
         d_depth = 8
-        channels = 16
+        channels = 64
         batch_norm = 0.99
         activation = 'swish'
         initializer = 4
@@ -302,9 +302,9 @@ class ICmodel(object):
             # residual blocks
             depth = 0
             while depth < d_depth:
+                downscale = depth % 2 == 1
                 depth += 1
                 skip2 = last
-                downscale = depth % 2 == 1
                 if downscale:
                     channels *= 4
                     with tf.variable_scope('trans{}'.format(l)) as scope:
@@ -320,7 +320,7 @@ class ICmodel(object):
                         is_training=is_training, data_format=data_format)
                     last = layers.apply_activation(last, activation=activation,
                         data_format=data_format, collection=weight_key)
-                    last = layers.conv2d(last, ksize=3, out_channels=channels,
+                    last = layers.conv2d(last, ksize=1, out_channels=channels // 4,
                         stride=1, padding='SAME', data_format=data_format,
                         batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_activation,
@@ -331,7 +331,18 @@ class ICmodel(object):
                         is_training=is_training, data_format=data_format)
                     last = layers.apply_activation(last, activation=activation,
                         data_format=data_format, collection=weight_key)
-                    last = layers.conv2d(last, ksize=3, out_channels=channels,
+                    last = layers.conv2d(last, ksize=3, out_channels=channels // 4,
+                        stride=1, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=None,
+                        initializer=initializer, init_factor=init_activation,
+                        collection=weight_key)
+                l += 1
+                with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                        data_format=data_format, collection=weight_key)
+                    last = layers.conv2d(last, ksize=1, out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
                         batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_activation,
@@ -344,34 +355,13 @@ class ICmodel(object):
                         padding = [[0, 0], [0, 0], [0, 0], [0, 0]]
                         padding[-3 if data_format == 'NCHW' else -1] = [0, channels // 2]
                         skip2 = tf.pad(skip2, padding)
-                    last = layers.SqueezeExcitation(last, channel_r=1,
+                    last = layers.SqueezeExcitation(last, channel_r=4,
                         data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
-            # space to depth (4096)
-            channels *= 16
+            # global average pooling (1024)
             with tf.variable_scope('trans{}'.format(l)) as scope:
-                if data_format == 'NCHW':
-                    last = utils.image.NCHW2NHWC(last)
-                last = tf.space_to_depth(last, 4)
-                if data_format == 'NCHW':
-                    last = utils.image.NHWC2NCHW(last)
-                last = tf.contrib.layers.flatten(last)
+                last = tf.reduce_mean(last, [-2, -1] if data_format == 'NCHW' else [-3, -2])
             # dense layers (1024)
-            channels //= 4
-            l += 1
-            with tf.variable_scope('dense{}'.format(l)) as scope:
-                last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
-                last = layers.apply_activation(last, activation='swish',
-                    data_format=data_format, collection=weight_key)
-            # dense layers (1024)
-            channels //= 1
-            l += 1
-            with tf.variable_scope('dense{}'.format(l)) as scope:
-                last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
-                last = layers.apply_activation(last, activation='swish',
-                    data_format=data_format, collection=weight_key)
-            # dense layers (1024)
-            channels //= 1
             l += 1
             with tf.variable_scope('dense{}'.format(l)) as scope:
                 last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
@@ -384,8 +374,9 @@ class ICmodel(object):
                 last = tf.contrib.layers.fully_connected(last, channels, activation_fn=None)
                 last = layers.apply_activation(last, activation='sigmoid',
                     data_format=data_format, collection=weight_key)
-            # return estimate
-            return last
+        # return estimate
+        print('Discriminator: totally {} convolutional layers.'.format(l))
+        return last
 
     def generator_losses(self, ref, pred, comp_pred, alpha=0.10, weights1=1.0, weights2=1.0):
         import utils.image
@@ -546,15 +537,17 @@ class ICmodel(object):
         # optimizer
         g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
             beta2=self.learning_beta2, epsilon=self.epsilon)
+        d_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
+            beta2=self.learning_beta2, epsilon=self.epsilon)
         
         # compute gradients
         with tf.control_dependencies(update_ops):
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, self.g_tvars)
-            d_grads_and_vars = g_opt.compute_gradients(self.d_loss, self.d_tvars)
+            d_grads_and_vars = d_opt.compute_gradients(self.d_loss, self.d_tvars)
         
         # apply gradients
         g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
-        g_train_ops.append(g_opt.apply_gradients(d_grads_and_vars))
+        g_train_ops.append(d_opt.apply_gradients(d_grads_and_vars))
         
         # add histograms for gradients
         for grad, var in g_grads_and_vars + d_grads_and_vars:
