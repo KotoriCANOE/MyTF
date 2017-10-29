@@ -7,9 +7,12 @@ import utils.image
 def convert_range(x, range_in, range_out, saturate=False):
     scale = (range_out[1] - range_out[0]) / (range_in[1] - range_in[0])
     bias = range_out[0] - range_in[0] * scale
-    scale = tf.constant(scale, x.dtype)
-    bias = tf.constant(bias, x.dtype)
-    y = x * scale + bias
+    if scale != 1:
+        scale = tf.constant(scale, x.dtype)
+        y = x * scale
+    if bias != 0:
+        bias = tf.constant(bias, x.dtype)
+        y += bias
     if saturate:
         y = tf.clip_by_value(y, range_out[0], range_out[1])
     return y

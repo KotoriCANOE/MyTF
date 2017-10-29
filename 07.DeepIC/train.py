@@ -147,23 +147,25 @@ def train():
         
         # lr decay operator
         def _get_val_window(lr, lr_last, lr_decay_op):
-            val_window = tf.Variable(10.0, trainable=False, dtype=tf.float64,
-                name='validation_window_size')
-            val_window_inc_base = 10.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
-            val_window_inc = tf.Variable(val_window_inc_base, trainable=False, dtype=tf.float64)
-            tf.summary.scalar('val_window', val_window)
-            tf.summary.scalar('val_window_inc', val_window_inc)
-            with tf.control_dependencies([lr_decay_op]):
-                def f1_t(): # lr > learning_rate * 0.1
-                    return tf.assign(val_window_inc, val_window_inc * 0.9, use_locking=True)
-                def f2_t(): # lr_last > learning_rate * 0.1 >= lr
-                    return tf.assign(val_window_inc, val_window_inc_base, use_locking=True)
-                def f2_f(): # learning_rate * 0.1 >= lr_last
-                    return tf.assign(val_window_inc, val_window_inc * 0.95, use_locking=True)
-                val_window_inc = tf.cond(lr > FLAGS.learning_rate * 0.1, f1_t,
-                    lambda: tf.cond(lr_last > FLAGS.learning_rate * 0.1, f2_t, f2_f))
-                val_window_op = tf.assign_add(val_window, val_window_inc, use_locking=True)
-            return val_window, val_window_op
+            with tf.variable_scope('validation_window') as scope:
+                val_window = tf.Variable(10.0, trainable=False, dtype=tf.float64,
+                    name='validation_window_size')
+                val_window_inc_base = 10.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
+                val_window_inc = tf.Variable(val_window_inc_base, trainable=False,
+                    dtype=tf.float64, name='validation_window_inc')
+                tf.summary.scalar('val_window', val_window)
+                tf.summary.scalar('val_window_inc', val_window_inc)
+                with tf.control_dependencies([lr_decay_op]):
+                    def f1_t(): # lr > learning_rate * 0.1
+                        return tf.assign(val_window_inc, val_window_inc * 0.9, use_locking=True)
+                    def f2_t(): # lr_last > learning_rate * 0.1 >= lr
+                        return tf.assign(val_window_inc, val_window_inc_base, use_locking=True)
+                    def f2_f(): # learning_rate * 0.1 >= lr_last
+                        return tf.assign(val_window_inc, val_window_inc * 0.95, use_locking=True)
+                    val_window_inc = tf.cond(lr > FLAGS.learning_rate * 0.1, f1_t,
+                        lambda: tf.cond(lr_last > FLAGS.learning_rate * 0.1, f2_t, f2_f))
+                    val_window_op = tf.assign_add(val_window, val_window_inc, use_locking=True)
+                return val_window, val_window_op
         
         if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
             g_lr_decay_op = model.lr_decay()

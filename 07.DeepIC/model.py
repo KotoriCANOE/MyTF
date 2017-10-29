@@ -34,7 +34,7 @@ tf.app.flags.DEFINE_integer('d_depth', 6,
                             """Depth of the network: number of layers, residual blocks, etc.""")
 tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
-tf.app.flags.DEFINE_float('batch_norm', 0.999,
+tf.app.flags.DEFINE_float('batch_norm', 0.99,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('activation', 'swish',
                             """Activation function used.""")
@@ -287,6 +287,21 @@ class ICmodel(object):
         init_factor = 1.0
         init_activation = 2.0
         weight_key = self.discriminator_weight_key
+        # binarization
+        with tf.variable_scope('binarization', reuse=reuse) as scope:
+            graph = tf.get_default_graph()
+            grad_map = {}#{'FloorDiv': 'Div_grad'}
+            bin_div = 128
+            enc_bin = []
+            enc_mod = images_enc
+            with graph.gradient_override_map(grad_map):
+                while bin_div > 0:
+                    #enc_bin.append(tf.truncatediv(enc_mod, bin_div))
+                    #enc_mod = tf.truncatemod(enc_mod, bin_div)
+                    enc_bin.append(tf.floor_div(enc_mod, bin_div))
+                    enc_mod = tf.floormod(enc_mod, bin_div)
+                    bin_div //= 2
+            images_enc = tf.concat(enc_bin, axis=-3 if data_format == 'NCHW' else -1)
         # initialization
         last = images_enc
         l = 0
@@ -394,7 +409,7 @@ class ICmodel(object):
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
             # compression ratio
-            comp_pred = tf.reduce_mean(comp_pred)
+            comp_pred = tf.reduce_mean(comp_pred, name='compress_loss')
             tf.losses.add_loss(comp_pred, loss_collection=collection)
             # L1 loss
             weights1 *= 1 - alpha
@@ -500,7 +515,7 @@ class ICmodel(object):
         return self.g_loss, self.d_loss
     
     def lr_decay(self):
-        self.g_lr_last = tf.Variable(self.g_lr, trainable=False)
+        self.g_lr_last = tf.Variable(self.g_lr, trainable=False, name='generator_lr_last')
         g_lr_last_op = tf.assign(self.g_lr_last, self.g_lr, use_locking=True)
         with tf.control_dependencies([g_lr_last_op]):
             g_lr_decay_op = tf.assign(self.g_lr, self.g_lr * (1 - self.lr_decay_factor), use_locking=True)
@@ -519,8 +534,8 @@ class ICmodel(object):
         
         # generate moving averages of all losses and associated summaries
         losses = [self.g_loss, self.d_loss]
-        losses += tf.losses.get_losses(loss_collection=self.generator_loss_key
-            + self.discriminator_loss_key)
+        losses += tf.losses.get_losses(loss_collection=self.generator_loss_key)
+        losses += tf.losses.get_losses(loss_collection=self.discriminator_loss_key)
         loss_averages_op = layers.loss_summaries(losses, self.loss_moving_average)
         if loss_averages_op: update_ops.append(loss_averages_op)
         
