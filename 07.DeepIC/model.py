@@ -202,15 +202,21 @@ class ICmodel(object):
                 # encoder - final conv layer
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
-                    last = layers.conv2d(last, ksize=self.k_last, out_channels=self.image_channels,
+                    last = layers.conv2d(last, ksize=self.k_last, out_channels=self.image_channels * 8,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation='tanh',
+                        batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
             # encoded images
-            last = layers.quantize(last, [-1, 1], [0, 255], saturate=False)
+            '''
+            last = tf.tanh(last)
+            last = layers.quantize(last, [-1, 1], [0, 1], saturate=False)
             self.images_enc = last
-            last = layers.convert_range(last, [0, 255], [-1, 1], saturate=False)
+            last = layers.convert_range(last, [0, 1], [-1, 1], saturate=False)
+            '''
+            last = tf.tanh(last)
+            if not is_training: last = tf.ceil(last)
+            self.images_enc = last
             # decoder
             with tf.variable_scope('decoder') as scope:
                 # decoder - first conv layer
@@ -287,21 +293,21 @@ class ICmodel(object):
         init_factor = 1.0
         init_activation = 2.0
         weight_key = self.discriminator_weight_key
+        '''
         # binarization
         with tf.variable_scope('binarization', reuse=reuse) as scope:
             graph = tf.get_default_graph()
-            grad_map = {}#{'FloorDiv': 'Div_grad'}
             bin_div = 128
             enc_bin = []
             enc_mod = images_enc
-            with graph.gradient_override_map(grad_map):
-                while bin_div > 0:
-                    #enc_bin.append(tf.truncatediv(enc_mod, bin_div))
-                    #enc_mod = tf.truncatemod(enc_mod, bin_div)
-                    enc_bin.append(tf.floor_div(enc_mod, bin_div))
-                    enc_mod = tf.floormod(enc_mod, bin_div)
-                    bin_div //= 2
+            while bin_div > 0:
+                #enc_bin.append(tf.truncatediv(enc_mod, bin_div))
+                #enc_mod = tf.truncatemod(enc_mod, bin_div)
+                enc_bin.append(tf.floor_div(enc_mod, bin_div))
+                enc_mod = tf.floormod(enc_mod, bin_div)
+                bin_div //= 2
             images_enc = tf.concat(enc_bin, axis=-3 if data_format == 'NCHW' else -1)
+        '''
         # initialization
         last = images_enc
         l = 0
@@ -393,7 +399,8 @@ class ICmodel(object):
         print('Discriminator: totally {} convolutional layers.'.format(l))
         return last
 
-    def generator_losses(self, ref, pred, comp_pred, alpha=0.10, weights1=1.0, weights2=1.0):
+    def generator_losses(self, ref, pred, enc, comp_pred, alpha=0.0,
+                         weights1=1.0, weights2=1.0, weights3=1.0, weights4=0.05):
         import utils.image
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
@@ -408,23 +415,20 @@ class ICmodel(object):
                         tf.get_collection(self.generator_weight_key)])
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
-            # compression ratio
-            comp_pred = tf.reduce_mean(comp_pred, name='compress_loss')
-            tf.losses.add_loss(comp_pred, loss_collection=collection)
             # L1 loss
-            weights1 *= 1 - alpha
-            weights2 *= alpha
-            if alpha != 1.0:
-                RGB_mad = tf.losses.absolute_difference(ref, pred,
-                    weights=weights1, loss_collection=collection, scope='RGB_MAD_loss')
-            # MS-SSIM: OPP color space - Y
-            if alpha != 0.0:
-                Y_ref = utils.image.RGB2Y(ref, data_format=self.data_format)
-                Y_pred = utils.image.RGB2Y(pred, data_format=self.data_format)
-                Y_ms_ssim = (1 - utils.image.MS_SSIM2(Y_ref, Y_pred, sigma=[0.6,1.5,4],
-                            norm=False, data_format=self.data_format))
-                Y_ms_ssim = tf.multiply(Y_ms_ssim, weights2, name='Y_MS_SSIM_loss')
-                tf.losses.add_loss(Y_ms_ssim, loss_collection=collection)
+            RGB_mad = tf.losses.absolute_difference(ref, pred, weights=weights1,
+                loss_collection=collection, scope='RGB_MAD_loss')
+            # L2 loss
+            RGB_mse = tf.losses.mean_squared_error(ref, pred, weights=weights2,
+                loss_collection=collection, scope='RGB_MSE_loss')
+            # binarization loss
+            bin_loss = 1 - tf.nn.l2_loss(enc) * 2 / tf.cast(tf.reduce_prod(tf.shape(enc)), self.dtype)
+            bin_loss = tf.multiply(bin_loss, weights3, name='binarization_loss')
+            tf.losses.add_loss(bin_loss, loss_collection=collection)
+            # compression ratio
+            comp_pred = tf.reduce_mean(comp_pred)
+            comp_pred = tf.multiply(comp_pred, weights4, name='compress_loss')
+            tf.losses.add_loss(comp_pred, loss_collection=collection)
             # return total loss
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
                             name=self.generator_total_loss_key)
@@ -441,11 +445,12 @@ class ICmodel(object):
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
             # get reference compression ratio
             pngs = []
-            enc_u8 = utils.image.NCHW2NHWC(enc_u8)
+            if self.data_format == 'NCHW':
+                enc_u8 = utils.image.NCHW2NHWC(enc_u8)
             for _ in range(self.batch_size):
                 pngs.append(tf.image.encode_png(enc_u8[_], compression=None))
-            pngs_length = helper.string_length(tf.stack(pngs, axis=0))
-            comp_ratio = tf.cast(pngs_length, tf.float32) / tf.cast(tf.reduce_prod(tf.shape(enc_u8[0])), tf.float32)
+            pngs_length = tf.cast(helper.string_length(tf.stack(pngs, axis=0)), self.dtype)
+            comp_ratio = pngs_length / tf.cast(tf.reduce_prod(tf.shape(enc_u8[0])), self.dtype)
             # L1 loss
             mad = tf.losses.absolute_difference(comp_ratio, comp_pred,
                 weights=1.0, loss_collection=collection, scope='MAD_loss')
@@ -467,7 +472,21 @@ class ICmodel(object):
         self.images_dec = self.generator(self.images_src, is_training=is_training)
         
         # encoded images
-        self.images_enc_u8 = tf.cast(self.images_enc, tf.uint8, name='Encoded')
+        with tf.variable_scope('debinarization') as scope:
+            enc_bin = tf.ceil(self.images_enc) if is_training else self.images_enc
+            shape_ = tf.shape(enc_bin)
+            if self.data_format == 'NCHW':
+                shape_split = [shape_[-4], self.image_channels, 8, shape_[-2], shape_[-1]]
+                debin_shape = [8, 1, 1]
+            else:
+                shape_split = [shape_[-4], shape_[-3], shape_[-2], self.image_channels, 8]
+                debin_shape = [8]
+            enc_split = tf.reshape(enc_bin, shape_split)
+            debin_mul = tf.constant([1, 2, 4, 8, 16, 32, 64, 128], dtype=self.dtype)
+            debin_mul = tf.reshape(debin_mul, debin_shape)
+            enc_debin = enc_split * debin_mul
+            enc_debin = tf.reduce_sum(enc_debin, axis=-3 if self.data_format == 'NCHW' else -1)
+        self.images_enc_u8 = tf.cast(enc_debin, tf.uint8, name='Encoded')
 
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:
@@ -503,7 +522,7 @@ class ICmodel(object):
         self.d_svars = list(set(self.d_tvars + self.d_mvars))
         
         # build generator losses
-        self.g_loss = self.generator_losses(self.images_src, self.images_dec, comp_pred)
+        self.g_loss = self.generator_losses(self.images_src, self.images_dec, self.images_enc, comp_pred)
 
         # build discriminator losses
         self.d_loss = self.discriminator_losses(self.images_enc_u8, comp_pred)

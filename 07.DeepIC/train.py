@@ -148,7 +148,7 @@ def train():
         # lr decay operator
         def _get_val_window(lr, lr_last, lr_decay_op):
             with tf.variable_scope('validation_window') as scope:
-                val_window = tf.Variable(10.0, trainable=False, dtype=tf.float64,
+                val_window = tf.Variable(30.0, trainable=False, dtype=tf.float64,
                     name='validation_window_size')
                 val_window_inc_base = 10.0 * np.log(1 - FLAGS.lr_decay_factor) / np.log(0.5)
                 val_window_inc = tf.Variable(val_window_inc_base, trainable=False,

@@ -78,9 +78,6 @@ def setup():
 
 # losses
 def get_losses(ref, pred, enc):
-    # quantization entropy
-    entropy = layers.entropy(tf.cast(enc, tf.float32), [0, 256], 256, saturate=False)
-
     # RGB color space
     RGB_mse = tf.losses.mean_squared_error(ref, pred, weights=1.0)
     RGB_mad = tf.losses.absolute_difference(ref, pred, weights=1.0)
@@ -91,6 +88,9 @@ def get_losses(ref, pred, enc):
     Y_ss_ssim = utils.image.SS_SSIM(Y_ref, Y_pred, data_format=FLAGS.data_format)
     Y_ms_ssim = utils.image.MS_SSIM2(Y_ref, Y_pred, norm=True, data_format=FLAGS.data_format)
     
+    # quantization entropy
+    entropy = layers.entropy(tf.cast(enc, tf.float32), [0, 256], 256, saturate=False)
+
     # return each loss
     return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim, entropy
 
