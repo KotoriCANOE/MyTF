@@ -27,7 +27,7 @@ def graph():
             qp_range=FLAGS.qp_range, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
             image_channels=FLAGS.image_channels)
         
-        model.build_model()
+        model.build_model(True, True)
         
         # a saver object which will save all the variables
         saver = tf.train.Saver(var_list=model.g_svars)

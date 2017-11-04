@@ -113,9 +113,10 @@ def test():
         model = ICmodel(FLAGS, data_format=FLAGS.data_format,
             input_range=FLAGS.input_range, output_range=FLAGS.output_range,
             qp_range=FLAGS.qp_range, multiGPU=FLAGS.multiGPU, use_fp16=FLAGS.use_fp16,
-            image_channels=FLAGS.image_channels)
+            image_channels=FLAGS.image_channels, input_height=FLAGS.patch_height,
+            input_width=FLAGS.patch_width, batch_size=FLAGS.batch_size)
         
-        model.build_model(images_src)
+        model.build_model(images_src, None)
         
         # a saver object which will save all the variables
         saver = tf.train.Saver(var_list=model.g_svars)

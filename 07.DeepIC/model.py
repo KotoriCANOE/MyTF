@@ -125,7 +125,7 @@ class ICmodel(object):
             self.shape_src = [self.batch_size, self.input_height, self.input_width, self.image_channels]
             self.shape_dec = [self.batch_size, self.output_height, self.output_width, self.image_channels]
     
-    def generator(self, images_src, is_training=False, reuse=None):
+    def generator(self, images_src, enc_src=None, is_training=False, reuse=None):
         print('generator: k_first={}, k_last={}, e_depth={}, d_depth={}, channels={}'.format(
             self.k_first, self.k_last, self.e_depth, self.d_depth, self.channels))
         # parameters
@@ -208,15 +208,11 @@ class ICmodel(object):
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
             # encoded images
-            '''
-            last = tf.tanh(last)
-            last = layers.quantize(last, [-1, 1], [0, 1], saturate=False)
-            self.images_enc = last
-            last = layers.convert_range(last, [0, 1], [-1, 1], saturate=False)
-            '''
-            last = tf.tanh(last)
-            if not is_training: last = tf.ceil(last)
-            self.images_enc = last
+            last = tf.tanh(last) # [-1, 1]
+            if not is_training:
+                last = tf.ceil(tf.nn.relu(last)) # {0, 1}
+            images_enc = last
+            if enc_src is not None: last = enc_src
             # decoder
             with tf.variable_scope('decoder') as scope:
                 # decoder - first conv layer
@@ -230,9 +226,9 @@ class ICmodel(object):
                         collection=weight_key)
                 # decoder - residual blocks
                 depth = 0
-                skip2 = last
                 while depth < self.d_depth:
                     depth += 1
+                    skip2 = last
                     l += 1
                     with tf.variable_scope('conv{}'.format(l)) as scope:
                         last = layers.apply_batch_norm(last, decay=batch_norm,
@@ -278,9 +274,10 @@ class ICmodel(object):
                         batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
+                images_dec = last
         # return SR image
         print('Generator: totally {} convolutional layers.'.format(l))
-        return last
+        return images_enc, images_dec
     
     def discriminator(self, images_enc, is_training=False, reuse=None):
         # parameters
@@ -293,21 +290,6 @@ class ICmodel(object):
         init_factor = 1.0
         init_activation = 2.0
         weight_key = self.discriminator_weight_key
-        '''
-        # binarization
-        with tf.variable_scope('binarization', reuse=reuse) as scope:
-            graph = tf.get_default_graph()
-            bin_div = 128
-            enc_bin = []
-            enc_mod = images_enc
-            while bin_div > 0:
-                #enc_bin.append(tf.truncatediv(enc_mod, bin_div))
-                #enc_mod = tf.truncatemod(enc_mod, bin_div)
-                enc_bin.append(tf.floor_div(enc_mod, bin_div))
-                enc_mod = tf.floormod(enc_mod, bin_div)
-                bin_div //= 2
-            images_enc = tf.concat(enc_bin, axis=-3 if data_format == 'NCHW' else -1)
-        '''
         # initialization
         last = images_enc
         l = 0
@@ -400,7 +382,7 @@ class ICmodel(object):
         return last
 
     def generator_losses(self, ref, pred, enc, comp_pred, alpha=0.0,
-                         weights1=1.0, weights2=1.0, weights3=1.0, weights4=0.05):
+                         weights1=1.0, weights2=1.0, weights3=0.5, weights4=0.1):
         import utils.image
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
@@ -422,7 +404,7 @@ class ICmodel(object):
             RGB_mse = tf.losses.mean_squared_error(ref, pred, weights=weights2,
                 loss_collection=collection, scope='RGB_MSE_loss')
             # binarization loss
-            bin_loss = 1 - tf.nn.l2_loss(enc) * 2 / tf.cast(tf.reduce_prod(tf.shape(enc)), self.dtype)
+            bin_loss = 1 - tf.reduce_mean(tf.square(enc))
             bin_loss = tf.multiply(bin_loss, weights3, name='binarization_loss')
             tf.losses.add_loss(bin_loss, loss_collection=collection)
             # compression ratio
@@ -458,9 +440,47 @@ class ICmodel(object):
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
                             name=self.discriminator_total_loss_key)
 
-    def build_model(self, images_src=None, is_training=False):
-        # set inputs
-        if images_src is None:
+    def debinarization(self, enc_bin, quantize=True):
+        with tf.variable_scope('debinarization') as scope:
+            enc_bin = tf.ceil(tf.nn.relu(enc_bin)) if quantize else enc_bin
+            shape = tf.shape(enc_bin)
+            if self.data_format == 'NCHW':
+                shape_split = [shape[-4], shape[-3] // 8, 8, shape[-2], shape[-1]]
+                debin_shape = [8, 1, 1]
+            else:
+                shape_split = [shape[-4], shape[-3], shape[-2], shape[-1] // 8, 8]
+                debin_shape = [8]
+            enc_split = tf.reshape(enc_bin, shape_split)
+            debin_mul = tf.constant([128, 64, 32, 16, 8, 4, 2, 1], dtype=enc_bin.dtype)
+            #debin_mul = tf.constant([1, 2, 4, 8, 16, 32, 64, 128], dtype=self.dtype) ###
+            debin_mul = tf.reshape(debin_mul, debin_shape)
+            enc_debin = enc_split * debin_mul
+            enc_debin = tf.reduce_sum(enc_debin, axis=-3 if self.data_format == 'NCHW' else -1)
+        return enc_debin
+
+    def binarization(self, enc_u8):
+        with tf.variable_scope('binarization') as scope:
+            shape = tf.shape(enc_u8)
+            if self.data_format == 'NCHW':
+                bin_shape = [shape[-4], shape[-3] * 8, shape[-2], shape[-1]]
+            else:
+                bin_shape = [shape[-4], shape[-3], shape[-2], shape[-1] * 8]
+            enc_mod = tf.expand_dims(enc_u8, -3 if self.data_format == 'NCHW' else -1)
+            bin_div = 128
+            enc_bin = []
+            while bin_div > 0:
+                enc_bin.append(tf.floor_div(enc_mod, bin_div))
+                if bin_div > 1:
+                    enc_mod = tf.floormod(enc_mod, bin_div)
+                bin_div //= 2
+            #enc_bin.reverse() ###
+            enc_bin = tf.concat(enc_bin, axis=-3 if self.data_format == 'NCHW' else -1)
+            enc_bin = tf.reshape(enc_bin, bin_shape)
+        return enc_bin
+
+    def build_model(self, images_src=None, enc_src=None, is_training=False):
+        # image inputs
+        if images_src is None or images_src is True:
             self.images_src = tf.placeholder(self.dtype, self.shape_src, name='Source')
         else:
             self.images_src = tf.identity(images_src, name='Source')
@@ -468,26 +488,37 @@ class ICmodel(object):
         if self.input_range == 2:
             self.images_src = self.images_src * 2 - 1
         
-        # apply generator to inputs
-        self.images_dec = self.generator(self.images_src, is_training=is_training)
-        
-        # encoded images
-        with tf.variable_scope('debinarization') as scope:
-            enc_bin = tf.ceil(self.images_enc) if is_training else self.images_enc
-            shape_ = tf.shape(enc_bin)
-            if self.data_format == 'NCHW':
-                shape_split = [shape_[-4], self.image_channels, 8, shape_[-2], shape_[-1]]
-                debin_shape = [8, 1, 1]
-            else:
-                shape_split = [shape_[-4], shape_[-3], shape_[-2], self.image_channels, 8]
-                debin_shape = [8]
-            enc_split = tf.reshape(enc_bin, shape_split)
-            debin_mul = tf.constant([1, 2, 4, 8, 16, 32, 64, 128], dtype=self.dtype)
-            debin_mul = tf.reshape(debin_mul, debin_shape)
-            enc_debin = enc_split * debin_mul
-            enc_debin = tf.reduce_sum(enc_debin, axis=-3 if self.data_format == 'NCHW' else -1)
+        # encoded inputs
+        if enc_src is None:
+            self.enc_src = None
+        elif enc_src is True:
+            self.enc_src = tf.placeholder(self.dtype, self.shape_src, name='EncSource')
+        else:
+            self.enc_src = tf.identity(enc_src, name='EncSource')
+            self.enc_src.set_shape(self.enc_src)
+        '''
+        self.images_enc, _ = self.generator(self.images_src, None,
+            is_training=is_training)
+        enc_debin = self.debinarization(self.images_enc, quantize=is_training)
         self.images_enc_u8 = tf.cast(enc_debin, tf.uint8, name='Encoded')
-
+        #self.enc_src = enc_debin
+        '''
+        # binarization of encoded source
+        if self.enc_src is not None:
+            self.enc_src = self.binarization(self.enc_src)
+            self.enc_src = tf.cast(self.enc_src, self.dtype)
+        '''
+        _, self.images_dec = self.generator(tf.zeros_like(self.images_src), self.enc_src,
+            is_training=is_training, reuse=True)
+        '''
+        # apply generator to inputs
+        self.images_enc, self.images_dec = self.generator(self.images_src, self.enc_src,
+            is_training=is_training)
+        
+        # debinarization of encoded images
+        enc_debin = self.debinarization(self.images_enc, quantize=is_training)
+        self.images_enc_u8 = tf.cast(enc_debin, tf.uint8, name='Encoded')
+        
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:
             tf.multiply(self.images_dec + 1, 0.5, name='Decoded')
@@ -507,11 +538,11 @@ class ICmodel(object):
                 self.g_svars = {ema.average_name(var): var for var in self.g_svars}
         
         # return generated results
-        return self.images_enc, self.images_dec
+        return self.images_enc_u8, self.images_dec
     
     def build_train(self, images_src=None):
         # build generator
-        self.build_model(images_src, is_training=True)
+        self.build_model(images_src, None, is_training=True)
 
         # build discriminator
         comp_pred = self.discriminator(self.images_enc, is_training=True)
@@ -535,9 +566,10 @@ class ICmodel(object):
     
     def lr_decay(self):
         self.g_lr_last = tf.Variable(self.g_lr, trainable=False, name='generator_lr_last')
-        g_lr_last_op = tf.assign(self.g_lr_last, self.g_lr, use_locking=True)
-        with tf.control_dependencies([g_lr_last_op]):
-            g_lr_decay_op = tf.assign(self.g_lr, self.g_lr * (1 - self.lr_decay_factor), use_locking=True)
+        with tf.variable_scope('generator_lr_decay') as scope:
+            g_lr_last_op = tf.assign(self.g_lr_last, self.g_lr, use_locking=True)
+            with tf.control_dependencies([g_lr_last_op]):
+                g_lr_decay_op = tf.assign(self.g_lr, self.g_lr * (1 - self.lr_decay_factor), use_locking=True)
         return g_lr_decay_op
     
     def train(self, global_step):

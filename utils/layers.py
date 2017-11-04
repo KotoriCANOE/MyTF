@@ -154,13 +154,14 @@ def apply_batch_norm(last, decay=0.999, is_training=False, data_format='NHWC',
         return last
 
 def PReLU(last, data_format='NHWC', collection=None):
-    shape = last.get_shape()
-    shape = shape[-3] if data_format == 'NCHW' else shape[-1]
-    shape = [shape, 1, 1]
-    alpha = get_variable('alpha', shape, tf.zeros_initializer(), collection)
-    if data_format != 'NCHW':
-        alpha = tf.squeeze(alpha, axis=[-2, -1])
-    return tf.maximum(0.0, last) + alpha * tf.minimum(0.0, last)
+    with tf.variable_scope('prelu') as scope:
+        shape = last.get_shape()
+        shape = shape[-3] if data_format == 'NCHW' else shape[-1]
+        shape = [shape, 1, 1]
+        alpha = get_variable('alpha', shape, tf.zeros_initializer(), collection)
+        if data_format != 'NCHW':
+            alpha = tf.squeeze(alpha, axis=[-2, -1])
+        return tf.maximum(0.0, last) + alpha * tf.minimum(0.0, last)
 
 def SelectionUnit(last, data_format='NHWC', collection=None):
     with tf.variable_scope('selection_unit') as scope:
@@ -230,11 +231,13 @@ def apply_activation(last, activation, data_format='NHWC', collection=None):
         elif activation == 'tanh':
             last = tf.tanh(last)
         elif activation == 'swish':
-            last = last * tf.sigmoid(last)
+            with tf.variable_scope('swish') as scope:
+                last = last * tf.sigmoid(last)
         elif activation == 'swish_mod1':
             # http://kexue.fm/archives/4647/
             # x * min(1, exp(x))
-            last = tf.maximum(x, x * tf.exp(tf.negative(tf.abs(x))))
+            with tf.variable_scope('swish_mod1') as scope:
+                last = tf.maximum(x, x * tf.exp(tf.negative(tf.abs(x))))
         elif activation == 'relu':
             last = tf.nn.relu(last)
         elif activation == 'prelu':
