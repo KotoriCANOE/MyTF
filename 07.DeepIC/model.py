@@ -14,8 +14,6 @@ tf.app.flags.DEFINE_integer('input_range', 2,
 tf.app.flags.DEFINE_integer('output_range', 2,
                             """Internal used data range for output. Won't affect I/O. """
                             """1: [0, 1]; 2: [-1, 1]""")
-tf.app.flags.DEFINE_integer('qp_range', 0.05,
-                            """Quantization parameter [0,1).""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
 tf.app.flags.DEFINE_boolean('multiGPU', False,
@@ -72,12 +70,11 @@ tf.app.flags.DEFINE_float('train_moving_average', 0.9999,
 # model
 class ICmodel(object):
     def __init__(self, config, data_format='NCHW', input_range=2, output_range=2,
-                 qp_range=0.02, multiGPU=False, use_fp16=False, image_channels=3,
+                 multiGPU=False, use_fp16=False, image_channels=3,
                  input_height=None, input_width=None, batch_size=None):
         self.data_format = data_format
         self.input_range = input_range
         self.output_range = output_range
-        self.qp_range = qp_range
         self.multiGPU = multiGPU
         self.use_fp16 = use_fp16
         self.image_channels = image_channels
@@ -154,7 +151,7 @@ class ICmodel(object):
                 # encoder - residual blocks
                 depth = 0
                 while depth < self.e_depth:
-                    downscale = False#depth == (self.e_depth + 1) // 2
+                    downscale = False
                     depth += 1
                     skip2 = last
                     if downscale:
@@ -208,9 +205,8 @@ class ICmodel(object):
                         initializer=initializer, init_factor=init_factor,
                         collection=weight_key)
             # encoded images
-            last = tf.tanh(last) # [-1, 1]
             if not is_training:
-                last = tf.ceil(tf.nn.relu(last)) # {0, 1}
+                last = tf.round(last) # {0, 1}
             images_enc = last
             if enc_src is not None: last = enc_src
             # decoder
@@ -382,7 +378,7 @@ class ICmodel(object):
         return last
 
     def generator_losses(self, ref, pred, enc, comp_pred, alpha=0.0,
-                         weights1=1.0, weights2=1.0, weights3=0.5, weights4=0.1):
+                         weights1=1.0, weights2=1.0, weights3=10.0, weights4=0.1):
         import utils.image
         collection = self.generator_loss_key
         with tf.variable_scope('generator_losses') as scope:
@@ -404,7 +400,8 @@ class ICmodel(object):
             RGB_mse = tf.losses.mean_squared_error(ref, pred, weights=weights2,
                 loss_collection=collection, scope='RGB_MSE_loss')
             # binarization loss
-            bin_loss = 1 - tf.reduce_mean(tf.square(enc))
+            #bin_loss = 1 - tf.reduce_mean(tf.square(enc))
+            bin_loss = tf.reduce_mean(tf.abs(enc * (1 - enc)))
             bin_loss = tf.multiply(bin_loss, weights3, name='binarization_loss')
             tf.losses.add_loss(bin_loss, loss_collection=collection)
             # compression ratio
@@ -442,7 +439,7 @@ class ICmodel(object):
 
     def debinarization(self, enc_bin, quantize=True):
         with tf.variable_scope('debinarization') as scope:
-            enc_bin = tf.ceil(tf.nn.relu(enc_bin)) if quantize else enc_bin
+            enc_bin = tf.round(enc_bin) if quantize else enc_bin
             shape = tf.shape(enc_bin)
             if self.data_format == 'NCHW':
                 shape_split = [shape[-4], shape[-3] // 8, 8, shape[-2], shape[-1]]
@@ -452,7 +449,6 @@ class ICmodel(object):
                 debin_shape = [8]
             enc_split = tf.reshape(enc_bin, shape_split)
             debin_mul = tf.constant([128, 64, 32, 16, 8, 4, 2, 1], dtype=enc_bin.dtype)
-            #debin_mul = tf.constant([1, 2, 4, 8, 16, 32, 64, 128], dtype=self.dtype) ###
             debin_mul = tf.reshape(debin_mul, debin_shape)
             enc_debin = enc_split * debin_mul
             enc_debin = tf.reduce_sum(enc_debin, axis=-3 if self.data_format == 'NCHW' else -1)
@@ -496,21 +492,12 @@ class ICmodel(object):
         else:
             self.enc_src = tf.identity(enc_src, name='EncSource')
             self.enc_src.set_shape(self.enc_src)
-        '''
-        self.images_enc, _ = self.generator(self.images_src, None,
-            is_training=is_training)
-        enc_debin = self.debinarization(self.images_enc, quantize=is_training)
-        self.images_enc_u8 = tf.cast(enc_debin, tf.uint8, name='Encoded')
-        #self.enc_src = enc_debin
-        '''
+        
         # binarization of encoded source
         if self.enc_src is not None:
             self.enc_src = self.binarization(self.enc_src)
             self.enc_src = tf.cast(self.enc_src, self.dtype)
-        '''
-        _, self.images_dec = self.generator(tf.zeros_like(self.images_src), self.enc_src,
-            is_training=is_training, reuse=True)
-        '''
+        
         # apply generator to inputs
         self.images_enc, self.images_dec = self.generator(self.images_src, self.enc_src,
             is_training=is_training)
