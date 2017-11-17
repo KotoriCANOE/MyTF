@@ -390,6 +390,7 @@ def inputs(config, files, is_training=False, is_testing=False):
         return label
     
     # Dataset API
+    '''
     dataset = tf.contrib.data.Dataset.from_tensor_slices((files))
     if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
     dataset = dataset.map(parse1_func, num_threads=threads,
@@ -411,7 +412,6 @@ def inputs(config, files, is_training=False, is_testing=False):
     dataset = dataset.map(parse3_func, num_parallel_calls=1 if is_testing else threads).prefetch(threads * 8)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(num_epochs if is_training else None)
-    '''
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()

@@ -1,7 +1,6 @@
 import sys
 import tensorflow as tf
 sys.path.append('..')
-from utils import helper
 from utils import layers
 
 # basic parameters
@@ -150,9 +149,9 @@ class SRmodel(object):
             skip1 = last
             # residual blocks
             depth = 0
-            skip2 = last
             while depth < self.g_depth:
                 depth += 1
+                skip2 = last
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.apply_batch_norm(last, decay=batch_norm,
@@ -179,7 +178,6 @@ class SRmodel(object):
                     last = layers.SqueezeExcitation(last, channel_r=1,
                         data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
-                    skip2 = last
             # skip connection
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:

@@ -97,8 +97,7 @@ def get_losses(ref, pred, enc):
 # testing
 def test():
     files = helper.listdir_files(FLAGS.dataset,
-                                 filter_ext=['.jpeg', '.jpg', '.png'],
-                                 encoding=True)
+                                 filter_ext=['.jpeg', '.jpg', '.png'])
     steps_per_epoch = len(files) // FLAGS.batch_size
     epoch_size = steps_per_epoch * FLAGS.batch_size
     max_steps = steps_per_epoch

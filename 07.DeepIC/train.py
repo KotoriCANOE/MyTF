@@ -101,8 +101,7 @@ class LoggerHook(tf.train.SessionRunHook):
 def train():
     import random
     files = helper.listdir_files(FLAGS.dataset,
-                                 filter_ext=['.jpeg', '.jpg', '.png'],
-                                 encoding=True)
+                                 filter_ext=['.jpeg', '.jpg', '.png'])
     random.shuffle(files)
     steps_per_epoch = len(files) // FLAGS.batch_size
     epoch_size = steps_per_epoch * FLAGS.batch_size

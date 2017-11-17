@@ -42,7 +42,7 @@ tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Batch size.""")
 tf.app.flags.DEFINE_boolean('pre_down', True,
                             """Pre-downscale large image for (probably) higher quality data.""")
-tf.app.flags.DEFINE_integer('multistage_resize', 0,
+tf.app.flags.DEFINE_integer('multistage_resize', 2,
                             """Apply resizer (n * 2 + 1) times to simulate more complex filtered data.""")
 tf.app.flags.DEFINE_float('random_resizer', 0,
                             """value for resizer choice, 0 for random resizer.""")
@@ -50,7 +50,7 @@ tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
-tf.app.flags.DEFINE_float('jpeg_coding', 1.0,
+tf.app.flags.DEFINE_float('jpeg_coding', 2.0,
                             """Using JPEG to generate compression artifacts for data.""")
 
 # reset random seeds
@@ -93,8 +93,7 @@ def get_losses(ref, pred):
 # testing
 def test():
     files = helper.listdir_files(FLAGS.dataset,
-                                 filter_ext=['.jpeg', '.jpg', '.png'],
-                                 encoding=True)
+                                 filter_ext=['.jpeg', '.jpg', '.png'])
     steps_per_epoch = len(files) // FLAGS.batch_size
     epoch_size = steps_per_epoch * FLAGS.batch_size
     max_steps = steps_per_epoch

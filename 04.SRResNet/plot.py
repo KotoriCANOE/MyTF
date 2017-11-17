@@ -80,4 +80,5 @@ def plot1(postfix, labels=None, name=None):
 #plot1([186, 190, 191, 192], ['SENet', 'SENet v2', 'sub-pixel conv', 'sub-pixel conv in skip0'], '190')
 #plot1([192, 193, 194, 195], ['sub-pixel conv in skip0', 'no SE in skip1', 'SE: channel_r=1', 'SE: conv2d ver.'], '193')
 #plot1([186, 194, 196, 197, 198], ['SENet', 'SE: channel_r=1', 'adaptive lr v3 10 6*0.8', 'adaptive lr v3 10 5*0.9', 'adaptive lr v3 20 6*0.9'], '196')
-plot1([194, 197, 198, 199, 200], ['SE: channel_r=1', 'adaptive lr v3 10 5*0.9', 'adaptive lr v3 20 6*0.9', 'adaptive lr v3 10 6*0.95', 'adaptive lr v4 10 5*0.9=>0.95'], '199')
+#plot1([194, 197, 198, 199, 200], ['SE: channel_r=1', 'adaptive lr v3 10 5*0.9', 'adaptive lr v3 20 6*0.9', 'adaptive lr v3 10 6*0.95', 'adaptive lr v4 10 5*0.9=>0.95'], '199')
+plot1([199, 201, 202], ['Pre: Medium', 'Pre: Heavy (from Medium)', 'Pre: Heavy (TF 1.4)'], '202')

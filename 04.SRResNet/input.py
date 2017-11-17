@@ -222,7 +222,7 @@ def inputs(config, files, is_training=False, is_testing=False):
             src_linear = src_linear[dscale - 1]
             resizes = resizes[dscale - 1]
             linear_resizes = linear_resizes[dscale - 1]
-        # multiple stage
+        # multiple stages
         for _ in range(config.multistage_resize * 2 + 1):
             dw = patch_width // scaling if _ % 2 == 0 else patch_width
             dh = patch_height // scaling if _ % 2 == 0 else patch_height
@@ -391,6 +391,7 @@ def inputs(config, files, is_training=False, is_testing=False):
         return data, label
     
     # Dataset API
+    '''
     dataset = tf.contrib.data.Dataset.from_tensor_slices((files))
     if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
     dataset = dataset.map(parse1_func, num_threads=threads,
@@ -412,7 +413,6 @@ def inputs(config, files, is_training=False, is_testing=False):
     dataset = dataset.map(parse3_func, num_parallel_calls=1 if is_testing else threads).prefetch(threads * 8)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(num_epochs if is_training else None)
-    '''
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()

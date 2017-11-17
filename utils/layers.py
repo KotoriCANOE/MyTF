@@ -460,7 +460,9 @@ def subpixel_conv2d(last, ksize, out_channels=None,
         batch_norm=batch_norm, is_training=is_training, activation=activation,
         initializer=initializer, init_factor=init_factor, wd=wd, collection=collection)
     # periodic shuffling
-    #last = tf.depth_to_space(last, scaling[0], data_format=data_format)
+    '''
+    last = tf.depth_to_space(last, scaling[0], data_format=data_format)
+    '''
     if data_format == 'NCHW':
         last = utils.image.NCHW2NHWC(last)
     last = tf.depth_to_space(last, scaling[0])
@@ -483,7 +485,9 @@ def depthwise_subpixel_conv2d(last, ksize, channel_multiplier=1,
         batch_norm=batch_norm, is_training=is_training, activation=activation,
         initializer=initializer, init_factor=init_factor, wd=wd, collection=collection)
     # periodic shuffling
-    #last = tf.depth_to_space(last, scaling[0], data_format=data_format)
+    '''
+    last = tf.depth_to_space(last, scaling[0], data_format=data_format)
+    '''
     if data_format == 'NCHW':
         last = utils.image.NCHW2NHWC(last)
     last = tf.depth_to_space(last, scaling[0])
