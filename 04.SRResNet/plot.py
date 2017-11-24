@@ -81,4 +81,13 @@ def plot1(postfix, labels=None, name=None):
 #plot1([192, 193, 194, 195], ['sub-pixel conv in skip0', 'no SE in skip1', 'SE: channel_r=1', 'SE: conv2d ver.'], '193')
 #plot1([186, 194, 196, 197, 198], ['SENet', 'SE: channel_r=1', 'adaptive lr v3 10 6*0.8', 'adaptive lr v3 10 5*0.9', 'adaptive lr v3 20 6*0.9'], '196')
 #plot1([194, 197, 198, 199, 200], ['SE: channel_r=1', 'adaptive lr v3 10 5*0.9', 'adaptive lr v3 20 6*0.9', 'adaptive lr v3 10 6*0.95', 'adaptive lr v4 10 5*0.9=>0.95'], '199')
-plot1([199, 201, 202], ['Pre: Medium', 'Pre: Heavy (from Medium)', 'Pre: Heavy (TF 1.4)'], '202')
+#plot1([199, 201, 202], ['Pre: Medium', 'Pre: Heavy (from Medium)', 'Pre: Heavy (TF 1.4)'], '202')
+#plot1([202, 203, 204, 205, 206, 207], ['subpixel conv: 3+5', 'subpixel conv: 4+4', 'deconv: 4+4', 'resize deconv: 4+4', 'resize conv: 4+4', 'resize conv: 3+5'], '203')
+#plot1([208, 209, 207, 210, 211], ['resize conv: 3+3', 'resize conv: 3+4', 'resize conv: 3+5', 'resize conv: 3+7', 'resize conv: 3+5'], '207')
+
+
+
+#plot1([1000, 1001], ['patch=96 batch=16', 'patch=64 batch=16'], '1000')
+plot1([1001, 1002], ['original resize, multi=3', 'with artifacts resize, multi=2'], '1002')
+
+

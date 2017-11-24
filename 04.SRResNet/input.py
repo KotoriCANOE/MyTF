@@ -170,13 +170,15 @@ def inputs(config, files, is_training=False, is_testing=False):
     def src_down_func(clip):
         dw = patch_width
         dh = patch_height
-        clip = SigmoidInverse(clip)
-        clip = clip.resize.Bicubic(dw, dh, filter_param_a=0, filter_param_b=0.5)
-        clip = SigmoidDirect(clip)
-        clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        if clip.width != dw or clip.height != dh:
+            clip = SigmoidInverse(clip)
+            clip = clip.resize.Bicubic(dw, dh, filter_param_a=0, filter_param_b=0.5)
+            clip = SigmoidDirect(clip)
         return clip
     if config.pre_down:
-        _srcs_down = [src_down_func(s) for s in _srcs_linear]
+        _srcs_linear = [src_down_func(s) for s in _srcs_linear]
+        _srcs = _srcs[0:1] + [s.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+                                   for s in _srcs_linear[1:]]
     
     def src_select_eval(n):
         # select source
@@ -184,10 +186,7 @@ def inputs(config, files, is_training=False, is_testing=False):
         sh = shape[-2 if data_format == 'NCHW' else -3]
         dscale = sh // patch_height
         # downscale if needed
-        if dscale > 1:
-            clip = _srcs_down[dscale - 1]
-        else:
-            clip = _srcs[dscale - 1]
+        clip = _srcs[dscale - 1]
         return clip
     if config.pre_down:
         _src = _src_blk[0].std.FrameEval(src_select_eval)
@@ -195,9 +194,12 @@ def inputs(config, files, is_training=False, is_testing=False):
         _src = _srcs[0]
     
     def resize_set_func(clip, convert_linear=False):
+        # disable resize set when scaling=1
+        if scaling == 1:
+            return clip
         # parameters
-        dw = patch_width // scaling
-        dh = patch_height // scaling
+        dw = int(patch_width / scaling + 0.5)
+        dh = int(patch_height / scaling + 0.5)
         rets = {}
         # resizers
         rets['bilinear'] = clip.resize.Bilinear(dw, dh)
@@ -222,10 +224,22 @@ def inputs(config, files, is_training=False, is_testing=False):
             src_linear = src_linear[dscale - 1]
             resizes = resizes[dscale - 1]
             linear_resizes = linear_resizes[dscale - 1]
+        # initialize
+        is_linear = False
+        clip = src
         # multiple stages
-        for _ in range(config.multistage_resize * 2 + 1):
-            dw = patch_width // scaling if _ % 2 == 0 else patch_width
-            dh = patch_height // scaling if _ % 2 == 0 else patch_height
+        max_iter = config.multistage_resize * 2
+        if scaling != 1: max_iter += 1
+        for _ in range(max_iter):
+            # skip multistage resize
+            scaling_match = _ % 2 == 0 if scaling == 1 else _ % 2 == 1
+            if config.multistage_resize > 0 and scaling_match and np.random.uniform(0, 1) < 0.5:
+                break
+            # scaling size
+            scaling1 = 2 ** np.random.normal(0.6, 0.2) if scaling == 1 else scaling
+            dw = int(patch_width / scaling1 + 0.5) if _ % 2 == 0 else patch_width
+            dh = int(patch_height / scaling1 + 0.5) if _ % 2 == 0 else patch_height
+            use_resize_set = scaling != 1 and _ == 0
             # random number generator
             rand_val = np.random.uniform(-1, 1) if config.random_resizer == 0 else config.random_resizer
             abs_rand = np.abs(rand_val)
@@ -235,38 +249,48 @@ def inputs(config, files, is_training=False, is_testing=False):
                 clip = src_linear if rand_val < 0 else src
                 resizes = linear_resizes if rand_val < 0 else resizes
             # random resizers
-            if abs_rand < 0.05:
-                clip = resizes['bilinear'] if _ == 0 else clip.resize.Bilinear(dw, dh)
-            elif abs_rand < 0.1:
-                clip = resizes['spline16'] if _ == 0 else clip.resize.Spline16(dw, dh)
-            elif abs_rand < 0.15:
-                clip = resizes['spline36'] if _ == 0 else clip.resize.Spline36(dw, dh)
-            elif abs_rand < 0.4: # Lanczos taps=[2, 12)
+            if abs_rand < 0.04:
+                clip = resizes['bilinear'] if use_resize_set else clip.resize.Bilinear(dw, dh)
+            elif abs_rand < 0.07:
+                clip = resizes['spline16'] if use_resize_set else clip.resize.Spline16(dw, dh)
+            elif abs_rand < 0.10:
+                clip = resizes['spline36'] if use_resize_set else clip.resize.Spline36(dw, dh)
+            elif abs_rand < 0.25: # Lanczos taps=[2, 12)
                 taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
-                clip = resizes['lanczos{}'.format(taps)] if _ == 0 else clip.resize.Lanczos(dw, dh, filter_param_a=taps)
-            elif abs_rand < 0.6: # Catmull-Rom
+                clip = resizes['lanczos{}'.format(taps)] if use_resize_set else clip.resize.Lanczos(dw, dh, filter_param_a=taps)
+            elif abs_rand < 0.50: # Catmull-Rom
                 b = 0 if config.random_resizer == 0.4 else np.random.normal(0, 1/6)
                 c = (1 - b) * 0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.7: # Mitchell-Netravali (standard Bicubic)
+            elif abs_rand < 0.55: # Mitchell-Netravali (standard Bicubic)
                 b = 1/3 if config.random_resizer == 0.6 else np.random.normal(1/3, 1/6)
                 c = (1 - b) * 0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.8: # sharp Bicubic
+            elif abs_rand < 0.60: # sharp Bicubic
                 b = -0.5 if config.random_resizer == 0.7 else np.random.normal(-0.5, 0.25)
                 c = b * -0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.9: # soft Bicubic
+            elif abs_rand < 0.65: # soft Bicubic
                 b = 0.75 if config.random_resizer == 0.8 else np.random.normal(0.75, 0.25)
                 c = 1 - b
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            else: # arbitrary Bicubic
+            elif abs_rand < 0.75: # arbitrary Bicubic
                 b = np.random.normal(0, 0.5)
                 c = np.random.normal(0.25, 0.25)
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            # skip multistage resize
-            if config.multistage_resize > 0 and _ % 2 == 0 and np.random.uniform(0, 1) < 0.5:
-                break
+            else: # Bicubic with haloing & aliasing
+                b = np.random.normal(0, 2) # amount of haloing
+                c = -1 # when c is around b * 0.8, aliasing is minimum
+                if b >= 0: # with aliasing
+                    b = 1 + b
+                    while c < 0 or c > b * 1.2:
+                        c = np.random.normal(b * 0.4, b * 0.2)
+                else: # without aliasing
+                    b = 1 - b
+                    while c < 0 or c > b * 1.2:
+                        c = np.random.normal(b * 0.8, b * 0.2)
+                b = -b
+                clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
         # random linear-to-gamma
         if not keep_linear and is_linear:
             clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
@@ -391,28 +415,16 @@ def inputs(config, files, is_training=False, is_testing=False):
         return data, label
     
     # Dataset API
-    '''
-    dataset = tf.contrib.data.Dataset.from_tensor_slices((files))
-    if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
-    dataset = dataset.map(parse1_func, num_threads=threads,
-                          output_buffer_size=threads * 8)
-    dataset = dataset.map(lambda label: tuple(tf.py_func(parse2_pyfunc,
-                              [label], [tf.float32, tf.float32])),
-                          num_threads=1 if is_testing else threads_py, output_buffer_size=threads_py * 8)
-    dataset = dataset.map(parse3_func, num_threads=1 if is_testing else threads,
-                          output_buffer_size=threads * 8)
-    dataset = dataset.batch(batch_size)
-    dataset = dataset.repeat(num_epochs if is_training else None)
-    '''
     dataset = tf.data.Dataset.from_tensor_slices((files))
     if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
-    dataset = dataset.map(parse1_func, num_parallel_calls=threads).prefetch(threads * 8)
+    dataset = dataset.map(parse1_func, num_parallel_calls=threads)
     dataset = dataset.map(lambda label: tuple(tf.py_func(parse2_pyfunc,
                               [label], [tf.float32, tf.float32])),
-                          num_parallel_calls=1 if is_testing else threads_py).prefetch(threads_py * 8)
-    dataset = dataset.map(parse3_func, num_parallel_calls=1 if is_testing else threads).prefetch(threads * 8)
+                          num_parallel_calls=1 if is_testing else threads_py)
+    dataset = dataset.map(parse3_func, num_parallel_calls=1 if is_testing else threads)
     dataset = dataset.batch(batch_size)
     dataset = dataset.repeat(num_epochs if is_training else None)
+    dataset = dataset.prefetch(64)
     
     # return iterator
     iterator = dataset.make_one_shot_iterator()

@@ -26,6 +26,8 @@ tf.app.flags.DEFINE_integer('k_first', 3,
                             """Kernel size for the first layer.""")
 tf.app.flags.DEFINE_integer('k_last', 3,
                             """Kernel size for the last layer.""")
+tf.app.flags.DEFINE_integer('k_resize', 7,
+                            """Kernel size for the resize layer.""")
 tf.app.flags.DEFINE_integer('g_depth', 8,
                             """Depth of the network: number of layers, residual blocks, etc.""")
 tf.app.flags.DEFINE_integer('channels', 80,
@@ -36,6 +38,8 @@ tf.app.flags.DEFINE_float('batch_norm', 0.99,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('activation', 'su',
                             """Activation function used.""")
+tf.app.flags.DEFINE_boolean('use_se', True,
+                            """Apply Squeeze and Excitation activation.""")
 
 # training parameters
 tf.app.flags.DEFINE_integer('initializer', 4,
@@ -87,11 +91,13 @@ class SRmodel(object):
         
         self.k_first = config.k_first
         self.k_last = config.k_last
+        self.k_resize = config.k_resize
         self.g_depth = config.g_depth
         self.channels = config.channels
         self.channels2 = config.channels2
         self.batch_norm = config.batch_norm
         self.activation = config.activation
+        self.use_se = config.use_se
         
         self.initializer = config.initializer
         self.init_factor = config.init_factor
@@ -175,8 +181,9 @@ class SRmodel(object):
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                    last = layers.SqueezeExcitation(last, channel_r=1,
-                        data_format=data_format, collection=weight_key)
+                    if self.use_se:
+                        last = layers.SqueezeExcitation(last, channel_r=1,
+                            data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
             # skip connection
             l += 1
@@ -191,19 +198,22 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                last = layers.SqueezeExcitation(last, channel_r=1,
-                    data_format=data_format, collection=weight_key)
+                if self.use_se:
+                    last = layers.SqueezeExcitation(last, channel_r=1,
+                        data_format=data_format, collection=weight_key)
                 last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
                     data_format=data_format, collection=weight_key)
             # sub-pixel conv layer
-            l += 1
-            with tf.variable_scope('subpixel_conv{}'.format(l)) as scope:
-                last = layers.subpixel_conv2d(last, ksize=3, out_channels=channels2,
-                    scaling=self.scaling, padding='SAME', data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=activation,
-                    initializer=initializer, init_factor=init_activation,
-                    collection=weight_key)
+            scale_num = 1
+            while 1 << scale_num <= self.scaling:
+                with tf.variable_scope('resize_conv{}'.format(scale_num)) as scope:
+                    last = layers.resize_conv2d(last, ksize=3, out_channels=channels2,
+                        scaling=self.scaling, padding='SAME', data_format=data_format,
+                        batch_norm=None, is_training=is_training, activation=activation,
+                        initializer=initializer, init_factor=init_activation,
+                        collection=weight_key)
+                scale_num += 1
             # final conv layer
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
@@ -214,12 +224,15 @@ class SRmodel(object):
                     collection=weight_key)
             # skip connection
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                with tf.variable_scope('subpixel_conv') as scope:
-                    skip0 = layers.subpixel_conv2d(skip0, ksize=5, out_channels=self.image_channels,
-                        scaling=self.scaling, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation=None,
-                        initializer=initializer, init_factor=init_factor,
-                        collection=weight_key)
+                scale_num = 1
+                while 1 << scale_num <= self.scaling:
+                    with tf.variable_scope('resize_conv{}'.format(scale_num)) as scope:
+                        skip0 = layers.resize_conv2d(skip0, ksize=self.k_resize, out_channels=self.image_channels,
+                            scaling=self.scaling, padding='SAME', data_format=data_format,
+                            batch_norm=None, is_training=is_training, activation=None,
+                            initializer=initializer, init_factor=init_factor,
+                            collection=weight_key)
+                    scale_num += 1
                 last = tf.add(last, skip0)
         # return SR image
         print('Generator: totally {} convolutional layers.'.format(l))

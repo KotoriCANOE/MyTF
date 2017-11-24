@@ -28,9 +28,9 @@ tf.app.flags.DEFINE_boolean('progress', False,
                             """Whether to test across the entire training procedure.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
-tf.app.flags.DEFINE_integer('threads', 8,
+tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
-tf.app.flags.DEFINE_integer('threads_py', 8,
+tf.app.flags.DEFINE_integer('threads_py', 16,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -227,7 +227,7 @@ def test():
         ax.set_yscale('log')
         stats = stats[1:]
         ax.plot(stats[:, 0], stats[:, 2])
-        ax.axis(ymin=0)
+        #ax.axis(ymin=0)
         plt.tight_layout()
         plt.savefig(os.path.join(FLAGS.test_dir, 'stats.png'))
         plt.close()

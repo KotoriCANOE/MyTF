@@ -32,9 +32,9 @@ tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
 tf.app.flags.DEFINE_integer('timeline_steps', 911,
                             """Number of steps to save timeline.""")
-tf.app.flags.DEFINE_integer('threads', 8,
+tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
-tf.app.flags.DEFINE_integer('threads_py', 8,
+tf.app.flags.DEFINE_integer('threads_py', 16,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
