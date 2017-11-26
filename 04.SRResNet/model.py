@@ -38,8 +38,9 @@ tf.app.flags.DEFINE_float('batch_norm', 0.99,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('activation', 'su',
                             """Activation function used.""")
-tf.app.flags.DEFINE_boolean('use_se', True,
-                            """Apply Squeeze and Excitation activation.""")
+tf.app.flags.DEFINE_integer('use_se', 1,
+                            """Apply Squeeze and Excitation activation."""
+                            """0: not used; 1: global average SE; 2: local average SE""")
 
 # training parameters
 tf.app.flags.DEFINE_integer('initializer', 4,
@@ -181,8 +182,11 @@ class SRmodel(object):
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                    if self.use_se:
+                    if self.use_se == 1:
                         last = layers.SqueezeExcitation(last, channel_r=1,
+                            data_format=data_format, collection=weight_key)
+                    elif self.use_se == 2:
+                        last = layers.SqueezeExcitationLocal(last, channel_r=1, ksize=9,
                             data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
             # skip connection
@@ -198,8 +202,11 @@ class SRmodel(object):
                     initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
-                if self.use_se:
+                if self.use_se == 1:
                     last = layers.SqueezeExcitation(last, channel_r=1,
+                        data_format=data_format, collection=weight_key)
+                elif self.use_se == 2:
+                    last = layers.SqueezeExcitationLocal(last, channel_r=1, ksize=9,
                         data_format=data_format, collection=weight_key)
                 last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,

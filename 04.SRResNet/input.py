@@ -231,14 +231,20 @@ def inputs(config, files, is_training=False, is_testing=False):
         max_iter = config.multistage_resize * 2
         if scaling != 1: max_iter += 1
         for _ in range(max_iter):
+            downscale = _ % 2 == 0
             # skip multistage resize
-            scaling_match = _ % 2 == 0 if scaling == 1 else _ % 2 == 1
-            if config.multistage_resize > 0 and scaling_match and np.random.uniform(0, 1) < 0.5:
+            scaling_match = _ % 2 == 0 if scaling == 1 else _ % 2 == 1 # whether the last scaling matches size
+            if _ > 0 and scaling_match and np.random.uniform(0, 1) < 0.5:
                 break
             # scaling size
-            scaling1 = 2 ** np.random.normal(0.6, 0.2) if scaling == 1 else scaling
-            dw = int(patch_width / scaling1 + 0.5) if _ % 2 == 0 else patch_width
-            dh = int(patch_height / scaling1 + 0.5) if _ % 2 == 0 else patch_height
+            if scaling == 1:
+                scaling1 = 1
+                while scaling1 < 4 / 3: # [4 / 3, ~2)
+                    scaling1 = 2 ** np.random.normal(0.6, 0.2)
+            else:
+                scaling1 = scaling
+            dw = int(patch_width / scaling1 + 0.5) if downscale else patch_width
+            dh = int(patch_height / scaling1 + 0.5) if downscale else patch_height
             use_resize_set = scaling != 1 and _ == 0
             # random number generator
             rand_val = np.random.uniform(-1, 1) if config.random_resizer == 0 else config.random_resizer
@@ -249,37 +255,37 @@ def inputs(config, files, is_training=False, is_testing=False):
                 clip = src_linear if rand_val < 0 else src
                 resizes = linear_resizes if rand_val < 0 else resizes
             # random resizers
-            if abs_rand < 0.04:
+            if abs_rand < (0.05 if downscale else 0.05):
                 clip = resizes['bilinear'] if use_resize_set else clip.resize.Bilinear(dw, dh)
-            elif abs_rand < 0.07:
+            elif abs_rand < (0.10 if downscale else 0.10):
                 clip = resizes['spline16'] if use_resize_set else clip.resize.Spline16(dw, dh)
-            elif abs_rand < 0.10:
+            elif abs_rand < (0.15 if downscale else 0.15):
                 clip = resizes['spline36'] if use_resize_set else clip.resize.Spline36(dw, dh)
-            elif abs_rand < 0.25: # Lanczos taps=[2, 12)
+            elif abs_rand < (0.25 if downscale else 0.30): # Lanczos taps=[2, 12)
                 taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
                 clip = resizes['lanczos{}'.format(taps)] if use_resize_set else clip.resize.Lanczos(dw, dh, filter_param_a=taps)
-            elif abs_rand < 0.50: # Catmull-Rom
+            elif abs_rand < (0.50 if downscale else 0.40): # Catmull-Rom
                 b = 0 if config.random_resizer == 0.4 else np.random.normal(0, 1/6)
                 c = (1 - b) * 0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.55: # Mitchell-Netravali (standard Bicubic)
+            elif abs_rand < (0.60 if downscale else 0.55): # Mitchell-Netravali (standard Bicubic)
                 b = 1/3 if config.random_resizer == 0.6 else np.random.normal(1/3, 1/6)
                 c = (1 - b) * 0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.60: # sharp Bicubic
+            elif abs_rand < (0.80 if downscale else 0.60): # sharp Bicubic
                 b = -0.5 if config.random_resizer == 0.7 else np.random.normal(-0.5, 0.25)
                 c = b * -0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.65: # soft Bicubic
+            elif abs_rand < (0.85 if downscale else 0.85): # soft Bicubic
                 b = 0.75 if config.random_resizer == 0.8 else np.random.normal(0.75, 0.25)
                 c = 1 - b
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < 0.75: # arbitrary Bicubic
+            elif abs_rand < (1.00 if downscale else 1.00): # arbitrary Bicubic
                 b = np.random.normal(0, 0.5)
                 c = np.random.normal(0.25, 0.25)
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            else: # Bicubic with haloing & aliasing
-                b = np.random.normal(0, 2) # amount of haloing
+            elif abs_rand < (1.00 if downscale else 1.00): # Bicubic with haloing & aliasing
+                b = np.random.normal(0, 1) # amount of haloing
                 c = -1 # when c is around b * 0.8, aliasing is minimum
                 if b >= 0: # with aliasing
                     b = 1 + b

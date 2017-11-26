@@ -94,23 +94,6 @@ def OPP2RGB(images, norm=False, data_format='NHWC', scope=None):
 # SS-SSIM/MS-SSIM implementation
 # https://github.com/tensorflow/models/blob/master/compression/image_encoder/msssim.py
 # https://stackoverflow.com/a/39053516
-def _fspecial_gauss(radius, sigma):
-    """Function to mimic the 'fspecial' gaussian MATLAB function
-    """
-    x_data, y_data = np.mgrid[1-radius:1+radius, 1-radius:1+radius]
-
-    x_data = np.expand_dims(x_data, axis=-1)
-    x_data = np.expand_dims(x_data, axis=-1)
-
-    y_data = np.expand_dims(y_data, axis=-1)
-    y_data = np.expand_dims(y_data, axis=-1)
-
-    x = tf.constant(x_data, dtype=tf.float32)
-    y = tf.constant(y_data, dtype=tf.float32)
-
-    g = tf.exp((x*x + y*y) / (-2.0*sigma*sigma))
-    return g / tf.reduce_sum(g)
-
 SS_SSIM_count = 0
 def SS_SSIM(img1, img2, ret_cs=False, mean_metric=True, radius=5, sigma=1.5, L=1, data_format='NHWC', scope=None):
     if scope is None:
@@ -119,7 +102,7 @@ def SS_SSIM(img1, img2, ret_cs=False, mean_metric=True, radius=5, sigma=1.5, L=1
         SS_SSIM_count += 1
     with tf.variable_scope(scope):
         # L: depth of image (255 in case the image has a differnt scale)
-        window = _fspecial_gauss(radius, sigma) # window shape [radius*2+1, radius*2+1]
+        window = helper.gauss_window(radius, sigma) # window shape [radius*2+1, radius*2+1]
         K1 = 0.01
         K2 = 0.03
         L_sq = L * L

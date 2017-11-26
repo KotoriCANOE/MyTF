@@ -203,23 +203,38 @@ def SqueezeExcitation(last, channels=None, channel_r=1, data_format='NHWC', coll
             last = tf.expand_dims(last, -2)
         return tf.multiply(skip, last)
 
-def SqueezeExcitationConv2D(last, channels=None, channel_r=1, data_format='NHWC', collection=None):
+def SqueezeExcitationLocal(last, channels=None, channel_r=1, ksize=9,
+                           data_format='NHWC', collection=None):
     shape = helper.dim2int(last.get_shape())
     in_channels = shape[-3] if data_format == 'NCHW' else shape[-1]
     if channels is None: channels = in_channels
     channels //= channel_r
-    with tf.variable_scope('squeeze_excitation_conv2d') as scope:
+    with tf.variable_scope('squeeze_excitation_local') as scope:
         skip = last
-        with tf.variable_scope('depthwise_conv') as scope:
-            last = depthwise_conv2d(last, ksize=13, channel_multiplier=1,
+        # squeeze - average local features
+        if isinstance(ksize, int) or isinstance(ksize, tf.Dimension):
+            ksize = [1, 1, ksize, ksize] if data_format == 'NCHW' else [1, ksize, ksize, 1]
+        last = tf.nn.avg_pool(last, ksize, strides=ksize,
+            padding='SAME', data_format=data_format)
+        # non-linear mapping
+        with tf.variable_scope('pointwise_conv1') as scope:
+            last = conv2d(last, ksize=1, out_channels=channels,
                 stride=1, padding='SAME', data_format=data_format,
-                batch_norm=None, is_training=False, activation='relu',
+                batch_norm=None, is_training=False, activation='swish',
                 initializer=4, init_factor=2.0, wd=None, collection=collection)
-        with tf.variable_scope('pointwise_conv') as scope:
-            last = conv2d(last, ksize=1, out_channels=None,
+        with tf.variable_scope('pointwise_conv2') as scope:
+            last = conv2d(last, ksize=1, out_channels=in_channels,
                 stride=1, padding='SAME', data_format=data_format,
                 batch_norm=None, is_training=False, activation='sigmoid',
                 initializer=4, init_factor=2.0, wd=None, collection=collection)
+        # upsample
+        if data_format == 'NCHW':
+            last = utils.image.NCHW2NHWC(last)
+        size = tf.shape(skip)[-2:] if data_format == 'NCHW' else tf.shape(skip)[-3:-1]
+        last = tf.image.resize_bilinear(last, size, align_corners=True)
+        if data_format == 'NCHW':
+            last = utils.image.NHWC2NCHW(last)
+        # excitation - feature weighting
         return tf.multiply(skip, last)
 
 def apply_activation(last, activation, data_format='NHWC', collection=None):

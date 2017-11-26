@@ -102,3 +102,21 @@ def ImageBatchWriter(sess, images, files, dtype=tf.uint8):
     pngs = BatchPNG(images, len(files))
     pngs = sess.run(pngs)
     WriteFiles(pngs, files)
+
+# Gaussian filter window for Conv2D
+def gauss_window(radius, sigma, channels=1, dtype=tf.float32):
+    # w = exp((x*x + y*y) / (-2.0*sigma*sigma))
+    x_data, y_data = np.mgrid[-radius:1+radius, -radius:1+radius]
+    w_data = (np.square(x_data) + np.square(y_data)) * -0.5
+    w_data = np.expand_dims(w_data, axis=-1)
+    w_data = np.expand_dims(w_data, axis=-1)
+    
+    w = tf.constant(w_data, dtype=dtype)
+    if not isinstance(sigma, tf.Tensor):
+        sigma = tf.constant(sigma, dtype=dtype)
+    g = tf.exp(w / tf.square(sigma))
+    g /= tf.reduce_sum(g)
+    
+    if channels > 1:
+        g = tf.concat([g] * channels, axis=-2)
+    return g
