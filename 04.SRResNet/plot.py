@@ -14,7 +14,15 @@ def smooth(x, y, sigma=1.0):
 def plot1(postfix, labels=None, name=None):
     MARKERS = 'x+^vDsoph*'
 
-    if labels is None: labels = postfix
+    if labels is None:
+        labels = [str(p) for p in postfix]
+    else:
+        for _ in range(len(postfix)):
+            if _ < len(labels):
+                if labels[_] is None:
+                    labels[_] = str(postfix[_])
+            else:
+                labels.append(str(postfix[_]))
     
     def _plot(index, loss, legend=1, xscale='linear', yscale='linear', xfunc=None, yfunc=None):
         fig, ax = plt.subplots()
@@ -88,6 +96,9 @@ def plot1(postfix, labels=None, name=None):
 
 
 #plot1([1000, 1001], ['patch=96 batch=16', 'patch=64 batch=16'], '1000')
-plot1([1001, 1002], ['original resize, multi=3', 'with artifacts resize, multi=2'], '1002')
+#plot1([1001, 1002, 1003], ['original resize, multi=3', 'with artifacts resize, multi=2', 'reduce artifacts, use_se=0, predown=True'], '1002')
+#plot1([1003, 1004, 1005, 1006, 1007], ['use_se=0, predown=True', 'use_se=1, predown=False', 'use_se=2, predown=False', 'use_se=0, predown=False', 'use_se=1, predown=False, channels=64'], '1003')
+#plot1([1001, 1007, 1008, 1009], ['original resize, multi=3', 'channels=64, mod resize 3, multi=2', 'channels=64, mod resize 4, multi=2', 'channels=64, mod resize 5, multi=2'], '1007')
+plot1([1009, 1010], [], '1007')
 
 

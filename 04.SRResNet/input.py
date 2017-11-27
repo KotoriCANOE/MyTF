@@ -232,9 +232,9 @@ def inputs(config, files, is_training=False, is_testing=False):
         if scaling != 1: max_iter += 1
         for _ in range(max_iter):
             downscale = _ % 2 == 0
-            # skip multistage resize
-            scaling_match = _ % 2 == 0 if scaling == 1 else _ % 2 == 1 # whether the last scaling matches size
-            if _ > 0 and scaling_match and np.random.uniform(0, 1) < 0.5:
+            # randomly skip multistage resize
+            scaling_match = _ % 2 == 0 if scaling == 1 else _ % 2 == 1 # whether the last scaling matches output size
+            if _ > 0 and scaling_match and np.random.uniform(0, 1) < 0.7:
                 break
             # scaling size
             if scaling == 1:
@@ -261,26 +261,26 @@ def inputs(config, files, is_training=False, is_testing=False):
                 clip = resizes['spline16'] if use_resize_set else clip.resize.Spline16(dw, dh)
             elif abs_rand < (0.15 if downscale else 0.15):
                 clip = resizes['spline36'] if use_resize_set else clip.resize.Spline36(dw, dh)
-            elif abs_rand < (0.25 if downscale else 0.30): # Lanczos taps=[2, 12)
+            elif abs_rand < (0.25 if downscale else 0.40): # Lanczos taps=[2, 12)
                 taps = int(np.clip(np.random.exponential(2) + 2, 2, 11))
                 clip = resizes['lanczos{}'.format(taps)] if use_resize_set else clip.resize.Lanczos(dw, dh, filter_param_a=taps)
-            elif abs_rand < (0.50 if downscale else 0.40): # Catmull-Rom
+            elif abs_rand < (0.50 if downscale else 0.50): # Catmull-Rom
                 b = 0 if config.random_resizer == 0.4 else np.random.normal(0, 1/6)
                 c = (1 - b) * 0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < (0.60 if downscale else 0.55): # Mitchell-Netravali (standard Bicubic)
+            elif abs_rand < (0.60 if downscale else 0.60): # Mitchell-Netravali (standard Bicubic)
                 b = 1/3 if config.random_resizer == 0.6 else np.random.normal(1/3, 1/6)
                 c = (1 - b) * 0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < (0.80 if downscale else 0.60): # sharp Bicubic
+            elif abs_rand < (0.80 if downscale else 0.70): # sharp Bicubic
                 b = -0.5 if config.random_resizer == 0.7 else np.random.normal(-0.5, 0.25)
                 c = b * -0.5
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < (0.85 if downscale else 0.85): # soft Bicubic
+            elif abs_rand < (0.85 if downscale else 0.80): # soft Bicubic
                 b = 0.75 if config.random_resizer == 0.8 else np.random.normal(0.75, 0.25)
                 c = 1 - b
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-            elif abs_rand < (1.00 if downscale else 1.00): # arbitrary Bicubic
+            elif abs_rand < (1.00 if downscale else 0.90): # arbitrary Bicubic
                 b = np.random.normal(0, 0.5)
                 c = np.random.normal(0.25, 0.25)
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
@@ -394,29 +394,31 @@ def inputs(config, files, is_training=False, is_testing=False):
         # JPEG encoding
         if config.jpeg_coding > 0:
             steps = 16
-            prob_step = 0.02
-            rand_val = tf.random_uniform([], 0, 1, seed=config.random_seed if is_testing else None)
+            prob_step = 0.025
+            rand_val = tf.random_uniform([], -1, 1, seed=config.random_seed if is_testing else None)
+            abs_rand = tf.abs(rand_val)
             def c_f1(data):
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (1, 2, 0))
                 data = tf.image.convert_image_dtype(data, tf.uint8, saturate=True)
-                def _f1(quality):
+                def _f1(quality, chroma_ds):
                     quality = int(quality + 0.5)
-                    return tf.image.encode_jpeg(data, quality=quality, chroma_downsampling=False)
-                def _cond_recur(rand_val, count=15, prob=0.0, quality=100.0):
+                    return tf.image.encode_jpeg(data, quality=quality, chroma_downsampling=chroma_ds)
+                def _cond_recur(abs_rand, count=15, chroma_ds=False, prob=0.0, quality=100.0):
                     prob += prob_step
                     if count <= 0:
-                        return _f1(quality)
+                        return _f1(quality, chroma_ds)
                     else:
-                        return tf.cond(rand_val < prob, lambda: _f1(quality),
-                            lambda: _cond_recur(rand_val, count - 1, prob, quality - config.jpeg_coding))
-                data = _cond_recur(rand_val, steps - 1)
+                        return tf.cond(abs_rand < prob, lambda: _f1(quality, chroma_ds),
+                            lambda: _cond_recur(abs_rand, count - 1, chroma_ds, prob, quality - config.jpeg_coding))
+                data = tf.cond(rand_val < 0, lambda: _cond_recur(abs_rand, steps - 1, True),
+                    lambda: _cond_recur(abs_rand, steps - 1, False))
                 data = tf.image.decode_jpeg(data)
                 data = tf.image.convert_image_dtype(data, tf.float32, saturate=False)
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (2, 0, 1))
                 return data
-            data = tf.cond(rand_val < prob_step * steps, lambda: c_f1(data), lambda: data)
+            data = tf.cond(abs_rand < prob_step * steps, lambda: c_f1(data), lambda: data)
         # return
         return data, label
     
