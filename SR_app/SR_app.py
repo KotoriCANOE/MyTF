@@ -44,13 +44,15 @@ def eprint(*args, **kwargs):
 
 # API
 class SRFilter:
-    def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2, sess_threads=1):
+    def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2,
+                 sess_threads=1, memory_fraction=1):
         # arXiv 1509.09308
         # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
         os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
         
         self.data_format = data_format
         self.scaling = scaling
+        self.memory_fraction = memory_fraction
         self._create_graph()
         self._create_session()
         self._restore_graph(model_dir)
@@ -60,7 +62,8 @@ class SRFilter:
         self.graph = tf.Graph()
     
     def _create_session(self):
-        gpu_options = tf.GPUOptions(allow_growth=True)
+        gpu_options = tf.GPUOptions(allow_growth=True,
+            per_process_gpu_memory_fraction=self.memory_fraction)
         config = tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False)
         self.sess = tf.Session(graph=self.graph, config=config)
     

@@ -128,6 +128,10 @@ def inputs(config, files, is_training=False, is_testing=False):
     import vapoursynth as vs
     from scipy import ndimage
     
+    def eval_random_select(n, clips):
+        rand_idx = np.random.randint(0, len(clips))
+        return clips[rand_idx]
+    
     def SigmoidInverse(clip, thr=0.5, cont=6.5, epsilon=1e-6):
         assert clip.format.sample_type == vs.FLOAT
         x0 = 1 / (1 + np.exp(cont * thr))
@@ -163,6 +167,9 @@ def inputs(config, files, is_training=False, is_testing=False):
         for p in range(planes):
             f_arr = np.array(f_out.get_write_array(p), copy=False)
             np.copyto(f_arr, _src_ref[n][p, :, :] if data_format == 'NCHW' else _src_ref[n][:, :, p])
+        # set frame properties
+        f_out.props['_Primaries'] = 1 # BT.709
+        f_out.props['_Transfer'] = 1 # BT.709
         return f_out
     _srcs = [s.std.ModifyFrame(s, src_frame_func) for s in _src_blk]
     _srcs_linear = [s.resize.Bicubic(transfer_s='linear', transfer_in_s='709') for s in _srcs]
@@ -213,7 +220,7 @@ def inputs(config, files, is_training=False, is_testing=False):
                 rets[key] = rets[key].resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         return rets
     
-    def resize_eval(n, src, src_linear, resizes, linear_resizes, dscale=None, keep_linear=False, converted_linear=False):
+    def resize_eval(n, src, src_linear, resizes, linear_resizes, dscale=None):
         # select source
         if dscale is True:
             shape = _src_ref[n].shape
@@ -225,7 +232,6 @@ def inputs(config, files, is_training=False, is_testing=False):
             resizes = resizes[dscale - 1]
             linear_resizes = linear_resizes[dscale - 1]
         # initialize
-        is_linear = False
         clip = src
         # multiple stages
         max_iter = config.multistage_resize * 2
@@ -251,7 +257,6 @@ def inputs(config, files, is_training=False, is_testing=False):
             abs_rand = np.abs(rand_val)
             # random gamma-to-linear
             if _ == 0:
-                is_linear = rand_val < 0 and (not converted_linear or abs_rand >= 0.4)
                 clip = src_linear if rand_val < 0 else src
                 resizes = linear_resizes if rand_val < 0 else resizes
             # random resizers
@@ -297,17 +302,34 @@ def inputs(config, files, is_training=False, is_testing=False):
                         c = np.random.normal(b * 0.8, b * 0.2)
                 b = -b
                 clip = clip.resize.Bicubic(dw, dh, filter_param_a=b, filter_param_b=c)
-        # random linear-to-gamma
-        if not keep_linear and is_linear:
-            clip = clip.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
         # return
         return clip
     
     _resizes = [resize_set_func(s, convert_linear=False) for s in _srcs]
     _linear_resizes = [resize_set_func(s, convert_linear=config.multistage_resize == 0) for s in _srcs_linear]
-    _dst = _dst_blk.std.FrameEval(lambda n: resize_eval(n, _srcs, _srcs_linear, _resizes, _linear_resizes,
-        dscale=True, keep_linear=False, converted_linear=config.multistage_resize == 0))
+    _dst = _dst_blk.std.FrameEval(lambda n: resize_eval(n, _srcs, _srcs_linear, _resizes, _linear_resizes, dscale=True))
+    _dst = _dst.resize.Bicubic(transfer_s='709') # convert to BT.709 transfer
     
+    # chroma subsampling
+    def chroma_subsampling(src):
+        YUV420PS = core.register_format(vs.YUV, vs.FLOAT, 32, 1, 1)
+        src420 = src.resize.Bicubic(format=YUV420PS, matrix_s='709', filter_param_a=0, filter_param_b=0.5)
+        clips = [src420.resize.Bilinear(format=vs.RGBS, matrix_in_s='709'),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=1.0, filter_param_b=0.0),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=0.5, filter_param_b=0.5),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=1 / 3, filter_param_b=1 / 3),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=0, filter_param_b=0.5),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=-0.5, filter_param_b=0.25),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=-1, filter_param_b=0.3),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=-1, filter_param_b=0.8),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=-2, filter_param_b=0.6),
+                src420.resize.Bicubic(format=vs.RGBS, matrix_in_s='709', filter_param_a=-2, filter_param_b=1.6)]
+        clips += [src] * 6
+        clip = src.std.FrameEval(lambda n: eval_random_select(n, clips))
+        return clip
+    _dst = chroma_subsampling(_dst)
+
+    # parser
     def parse2_pyfunc(label):
         channel_index = -3 if data_format == 'NCHW' else -1
         dscale = label.shape[-2 if data_format == 'NCHW' else -3] // patch_height
@@ -394,7 +416,7 @@ def inputs(config, files, is_training=False, is_testing=False):
         # JPEG encoding
         if config.jpeg_coding > 0:
             steps = 16
-            prob_step = 0.025
+            prob_step = 0.02
             rand_val = tf.random_uniform([], -1, 1, seed=config.random_seed if is_testing else None)
             abs_rand = tf.abs(rand_val)
             def c_f1(data):
