@@ -99,6 +99,7 @@ def plot1(postfix, labels=None, name=None):
 #plot1([1001, 1002, 1003], ['original resize, multi=3', 'with artifacts resize, multi=2', 'reduce artifacts, use_se=0, predown=True'], '1002')
 #plot1([1003, 1004, 1005, 1006, 1007], ['use_se=0, predown=True', 'use_se=1, predown=False', 'use_se=2, predown=False', 'use_se=0, predown=False', 'use_se=1, predown=False, channels=64'], '1003')
 #plot1([1001, 1007, 1008, 1009], ['original resize, multi=3', 'channels=64, mod resize 3, multi=2', 'channels=64, mod resize 4, multi=2', 'channels=64, mod resize 5, multi=2'], '1007')
-plot1([1009, 1010], [], '1007')
+#plot1([1009, 1010, 1011, 1012], [], '1009')
+#plot1([1012, 1013, 1014, 1015, 1016], [], '1012')
 
 

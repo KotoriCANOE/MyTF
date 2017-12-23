@@ -211,7 +211,7 @@ class SRmodel(object):
                 last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
                     data_format=data_format, collection=weight_key)
-            # sub-pixel conv layer
+            # resize conv layer
             scale_num = 1
             while 1 << scale_num <= self.scaling:
                 with tf.variable_scope('resize_conv{}'.format(scale_num)) as scope:

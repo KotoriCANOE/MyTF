@@ -172,7 +172,7 @@ def inputs(config, files, is_training=False, is_testing=False):
         f_out.props['_Transfer'] = 1 # BT.709
         return f_out
     _srcs = [s.std.ModifyFrame(s, src_frame_func) for s in _src_blk]
-    _srcs_linear = [s.resize.Bicubic(transfer_s='linear', transfer_in_s='709') for s in _srcs]
+    _srcs_linear = [s.resize.Bicubic(transfer_s='linear') for s in _srcs]
     
     def src_down_func(clip):
         dw = patch_width
@@ -184,7 +184,7 @@ def inputs(config, files, is_training=False, is_testing=False):
         return clip
     if config.pre_down:
         _srcs_linear = [src_down_func(s) for s in _srcs_linear]
-        _srcs = _srcs[0:1] + [s.resize.Bicubic(transfer_s='709', transfer_in_s='linear')
+        _srcs = _srcs[0:1] + [s.resize.Bicubic(transfer_s='709')
                                    for s in _srcs_linear[1:]]
     
     def src_select_eval(n):
@@ -357,55 +357,59 @@ def inputs(config, files, is_training=False, is_testing=False):
             f_arr = np.array(f_dst.get_read_array(p), copy=False)
             data.append(f_arr)
         data = np.stack(data, axis=channel_index)
-        # noise spatial correlation
-        def noise_correlation(noise, corr):
-            if corr > 0:
-                sigma = np.random.normal(corr, corr)
-                if sigma > 0.25:
-                    sigma = [0, sigma, sigma] if data_format == 'NCHW' else [sigma, sigma, 0]
-                    noise = ndimage.gaussian_filter(noise, sigma, truncate=2.0)
-            return noise
         # add Gaussian noise of random scale and random spatial correlation
-        if config.noise_scale > 0:
+        def _add_noise(data, noise_scale, noise_corr):
+            # noise spatial correlation
+            def noise_correlation(noise, corr):
+                if corr > 0:
+                    sigma = np.random.normal(corr, corr)
+                    if sigma > 0.25:
+                        sigma = [0, sigma, sigma] if data_format == 'NCHW' else [sigma, sigma, 0]
+                        noise = ndimage.gaussian_filter(noise, sigma, truncate=2.0)
+                return noise
+            if noise_scale <= 0:
+                return data
             rand_val = np.random.uniform(0, 1)
-            scale = np.random.exponential(config.noise_scale)
-            if rand_val >= 0.2 and scale > 0.002: # add noise
-                noise_shape = list(data.shape)
-                if rand_val < 0.35: # RGB noise
-                    noise = np.random.normal(0.0, scale, noise_shape).astype(np.float32)
-                    noise = noise_correlation(noise, config.noise_corr)
-                else: # Y/YUV noise
-                    noise_shape[channel_index] = 1
-                    noise_y = np.random.normal(0.0, scale, noise_shape).astype(np.float32)
-                    noise_y = noise_correlation(noise_y, config.noise_corr)
-                    scale_uv = np.random.exponential(config.noise_scale / 2)
-                    if rand_val < 0.55 and scale_uv > 0.002: # YUV noise
-                        noise_u = np.random.normal(0.0, scale_uv, noise_shape).astype(np.float32)
-                        noise_u = noise_correlation(noise_u, config.noise_corr * 1.5)
-                        noise_v = np.random.normal(0.0, scale_uv, noise_shape).astype(np.float32)
-                        noise_v = noise_correlation(noise_v, config.noise_corr * 1.5)
-                        rand_val2 = np.random.uniform(0, 1)
-                        if rand_val2 < 0.3: # Rec.601
-                            Kr = 0.299
-                            Kg = 0.587
-                            Kb = 0.114
-                        elif rand_val2 < 0.9: # Rec.709
-                            Kr = 0.2126
-                            Kg = 0.7152
-                            Kb = 0.0722
-                        else: # Rec.2020
-                            Kr = 0.2627
-                            Kg = 0.6780
-                            Kb = 0.0593
-                        noise_r = noise_y + ((1 - Kr) / 2) * noise_v
-                        noise_b = noise_y + ((1 - Kb) / 2) * noise_u
-                        noise_g = (1 / Kg) * noise_y - (Kr / Kg) * noise_r - (Kb / Kg) * noise_b
-                        noise = [noise_r, noise_g, noise_b]
-                    else:
-                        noise = [noise_y, noise_y, noise_y]
-                    noise = np.concatenate(noise, axis=channel_index)
-                # adding noise
-                data += noise
+            scale = np.random.exponential(noise_scale)
+            if rand_val < 0.2 or scale < 0.002: # won't add noise
+                return data
+            noise_shape = list(data.shape)
+            if rand_val < 0.35: # RGB noise
+                noise = np.random.normal(0.0, scale, noise_shape).astype(np.float32)
+                noise = noise_correlation(noise, noise_corr)
+            else: # Y/YUV noise
+                noise_shape[channel_index] = 1
+                noise_y = np.random.normal(0.0, scale, noise_shape).astype(np.float32)
+                noise_y = noise_correlation(noise_y, noise_corr)
+                scale_uv = np.random.exponential(noise_scale / 2)
+                if rand_val < 0.55 and scale_uv > 0.002: # YUV noise
+                    noise_u = np.random.normal(0.0, scale_uv, noise_shape).astype(np.float32)
+                    noise_u = noise_correlation(noise_u, noise_corr * 1.5)
+                    noise_v = np.random.normal(0.0, scale_uv, noise_shape).astype(np.float32)
+                    noise_v = noise_correlation(noise_v, noise_corr * 1.5)
+                    rand_val2 = np.random.uniform(0, 1)
+                    if rand_val2 < 0.3: # Rec.601
+                        Kr = 0.299
+                        Kg = 0.587
+                        Kb = 0.114
+                    elif rand_val2 < 0.9: # Rec.709
+                        Kr = 0.2126
+                        Kg = 0.7152
+                        Kb = 0.0722
+                    else: # Rec.2020
+                        Kr = 0.2627
+                        Kg = 0.6780
+                        Kb = 0.0593
+                    noise_r = noise_y + ((1 - Kr) / 2) * noise_v
+                    noise_b = noise_y + ((1 - Kb) / 2) * noise_u
+                    noise_g = (1 / Kg) * noise_y - (Kr / Kg) * noise_r - (Kb / Kg) * noise_b
+                    noise = [noise_r, noise_g, noise_b]
+                else:
+                    noise = [noise_y, noise_y, noise_y]
+                noise = np.concatenate(noise, axis=channel_index)
+            # adding noise
+            return data + noise
+        data = _add_noise(data, config.noise_scale, config.noise_corr)
         # return
         return data, label
     
@@ -414,10 +418,12 @@ def inputs(config, files, is_training=False, is_testing=False):
         data = tf.clip_by_value(data, 0.0, 1.0)
         label = tf.clip_by_value(label, 0.0, 1.0)
         # JPEG encoding
-        if config.jpeg_coding > 0:
+        def _jpeg_coding(data, quality_step, random_seed=None):
+            if quality_step <= 0:
+                return data
             steps = 16
             prob_step = 0.02
-            rand_val = tf.random_uniform([], -1, 1, seed=config.random_seed if is_testing else None)
+            rand_val = tf.random_uniform([], -1, 1, seed=random_seed)
             abs_rand = tf.abs(rand_val)
             def c_f1(data):
                 if data_format == 'NCHW':
@@ -440,14 +446,15 @@ def inputs(config, files, is_training=False, is_testing=False):
                 if data_format == 'NCHW':
                     data = tf.transpose(data, (2, 0, 1))
                 return data
-            data = tf.cond(abs_rand < prob_step * steps, lambda: c_f1(data), lambda: data)
+            return tf.cond(rand_val < prob_step * steps, lambda: c_f1(data), lambda: data)
+        data = _jpeg_coding(data, config.jpeg_coding, config.random_seed if is_testing else None)
         # return
         return data, label
     
     # Dataset API
     dataset = tf.data.Dataset.from_tensor_slices((files))
     if is_training and buffer_size > 0: dataset = dataset.shuffle(buffer_size)
-    dataset = dataset.map(parse1_func, num_parallel_calls=threads)
+    dataset = dataset.map(parse1_func, num_parallel_calls=1 if is_testing else threads)
     dataset = dataset.map(lambda label: tuple(tf.py_func(parse2_pyfunc,
                               [label], [tf.float32, tf.float32])),
                           num_parallel_calls=1 if is_testing else threads_py)

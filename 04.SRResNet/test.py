@@ -99,10 +99,22 @@ def test():
     max_steps = steps_per_epoch
     files = files[:epoch_size]
     
+    # test set
+    test_lr_batches = []
+    test_hr_batches = []
     with tf.Graph().as_default():
-        # pre-processing for input
+        # dataset
         with tf.device('/cpu:0'):
-            images_lr, images_hr = inputs(FLAGS, files, is_testing=True)
+            test_lr, test_hr = inputs(FLAGS, files, is_testing=True)
+        with setup() as sess:
+            for _ in range(max_steps):
+                _lr, _hr = sess.run((test_lr, test_hr))
+                test_lr_batches.append(_lr)
+                test_hr_batches.append(_hr)
+    
+    with tf.Graph().as_default():
+        images_lr = tf.placeholder(tf.float32, name='InputLR')
+        images_hr = tf.placeholder(tf.float32, name='InputHR')
         
         # build model
         model = SRmodel(FLAGS, data_format=FLAGS.data_format,
@@ -142,45 +154,46 @@ def test():
             ret_pngs.extend(helper.BatchPNG(images_sr, FLAGS.batch_size))
             ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
+        # initialize session
+        sess = setup()
+        
         # test latest checkpoint
-        with setup() as sess:
-            # restore variables from latest checkpoint
-            model_file = tf.train.latest_checkpoint(FLAGS.train_dir)
-            saver.restore(sess, model_file)
-            
-            # run session
-            ret = ret_loss + ret_pngs
-            sum_loss = [0 for _ in range(len(ret_loss))]
-            for step in range(max_steps):
-                cur_ret = sess.run(ret)
-                cur_loss = cur_ret[0:len(ret_loss)]
-                cur_pngs = cur_ret[len(ret_loss):]
-                # monitor losses
-                for _ in range(len(ret_loss)):
-                    sum_loss[_] += cur_loss[_]
-                #print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-                #       step, *cur_loss))
-                # images output
-                _start = step * FLAGS.batch_size
-                _stop = _start + FLAGS.batch_size
-                _range = range(_start, _stop)
-                ofiles = []
-                ofiles.extend([os.path.join(FLAGS.test_dir,
-                    '{:0>5}.0.LR.png'.format(_)) for _ in _range])
-                ofiles.extend([os.path.join(FLAGS.test_dir,
-                    '{:0>5}.1.HR.png'.format(_)) for _ in _range])
-                ofiles.extend([os.path.join(FLAGS.test_dir,
-                    '{:0>5}.2.SR{}.png'.format(_, FLAGS.postfix)) for _ in _range])
-                ofiles.extend([os.path.join(FLAGS.test_dir,
-                    '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
-                helper.WriteFiles(cur_pngs, ofiles)
-            
-            # summary
-            print('No.{}'.format(FLAGS.postfix))
-            mean_loss = [l / max_steps for l in sum_loss]
-            psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-            print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-                   psnr, *mean_loss[1:]))
+        model_file = tf.train.latest_checkpoint(FLAGS.train_dir)
+        saver.restore(sess, model_file)
+        
+        ret = ret_loss + ret_pngs
+        sum_loss = [0 for _ in range(len(ret_loss))]
+        for step in range(max_steps):
+            feed_dict = {'InputLR:0': test_lr_batches[step], 'InputHR:0': test_hr_batches[step]}
+            cur_ret = sess.run(ret, feed_dict=feed_dict)
+            cur_loss = cur_ret[0:len(ret_loss)]
+            cur_pngs = cur_ret[len(ret_loss):]
+            # monitor losses
+            for _ in range(len(ret_loss)):
+                sum_loss[_] += cur_loss[_]
+            #print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+            #       step, *cur_loss))
+            # images output
+            _start = step * FLAGS.batch_size
+            _stop = _start + FLAGS.batch_size
+            _range = range(_start, _stop)
+            ofiles = []
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.0.LR.png'.format(_)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.1.HR.png'.format(_)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.2.SR{}.png'.format(_, FLAGS.postfix)) for _ in _range])
+            ofiles.extend([os.path.join(FLAGS.test_dir,
+                '{:0>5}.3.Bicubic.png'.format(_)) for _ in _range])
+            helper.WriteFiles(cur_pngs, ofiles)
+        
+        # summary
+        print('No.{}'.format(FLAGS.postfix))
+        mean_loss = [l / max_steps for l in sum_loss]
+        psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
+        print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
+               psnr, *mean_loss[1:]))
         
         # test progressively saved models
         if FLAGS.progress:
@@ -194,25 +207,25 @@ def test():
             mfiles = []
         
         for model_file in mfiles:
-            with setup() as sess:
-                # restore variables from saved model
-                saver.restore(sess, model_file)
-                
-                # run session
-                sum_loss = [0 for _ in range(len(ret_loss))]
-                for step in range(max_steps):
-                    cur_loss = sess.run(ret_loss)
-                    # monitor losses
-                    for _ in range(len(ret_loss)):
-                        sum_loss[_] += cur_loss[_]
-                
-                # summary
-                mean_loss = [l / max_steps for l in sum_loss]
-                
-                # save stats
-                if FLAGS.progress:
-                    model_num = os.path.split(model_file)[1][6:]
-                    stats.append(np.array([float(model_num)] + mean_loss))
+            # restore variables from saved model
+            saver.restore(sess, model_file)
+            
+            # run session
+            sum_loss = [0 for _ in range(len(ret_loss))]
+            for step in range(max_steps):
+                feed_dict = {'InputLR:0': test_lr_batches[step], 'InputHR:0': test_hr_batches[step]}
+                cur_loss = sess.run(ret_loss, feed_dict=feed_dict)
+                # monitor losses
+                for _ in range(len(ret_loss)):
+                    sum_loss[_] += cur_loss[_]
+            
+            # summary
+            mean_loss = [l / max_steps for l in sum_loss]
+            
+            # save stats
+            if FLAGS.progress:
+                model_num = os.path.split(model_file)[1][6:]
+                stats.append(np.array([float(model_num)] + mean_loss))
     
     # save stats
     import matplotlib.pyplot as plt
