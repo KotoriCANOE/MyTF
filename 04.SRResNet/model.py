@@ -300,14 +300,16 @@ class SRmodel(object):
         # trainable and model variables
         self.g_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
         self.g_mvars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
+        self.g_mvars = [elem for elem in self.g_mvars if elem not in self.g_tvars]
         self.g_svars = list(set(self.g_tvars + self.g_mvars))
+        self.g_rvars = self.g_svars.copy()
         
         # track the moving averages of all trainable variables
         if not is_training and self.train_moving_average > 0:
             with tf.variable_scope('train_moving_average') as scope:
                 ema = tf.train.ExponentialMovingAverage(self.train_moving_average)
-                g_ema_op = ema.apply(self.g_svars)
-                self.g_svars = {ema.average_name(var): var for var in self.g_svars}
+                self.g_rvars = {**{ema.average_name(var): var for var in self.g_tvars},
+                    **{var.op.name: var for var in self.g_mvars}}
         
         # return generated results
         return self.images_sr
@@ -390,10 +392,11 @@ class SRmodel(object):
         if self.train_moving_average > 0:
             with tf.variable_scope('train_moving_average') as scope:
                 ema = tf.train.ExponentialMovingAverage(self.train_moving_average, global_step)
-                g_ema_op = ema.apply(self.g_svars)
+                g_ema_op = ema.apply(self.g_tvars)
                 g_train_ops.append(g_ema_op)
-                self.g_rvars = {ema.average_name(var): var for var in self.g_svars}
-                self.g_svars = [ema.average(var) for var in self.g_svars]
+                self.g_rvars = {**{ema.average_name(var): var for var in self.g_tvars},
+                    **{var.op.name: var for var in self.g_mvars}}
+                self.g_svars = [ema.average(var) for var in self.g_tvars] + self.g_mvars
         
         # generate operation
         with tf.control_dependencies(g_train_ops):

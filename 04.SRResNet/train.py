@@ -178,12 +178,15 @@ def train():
         global_step = tf.train.get_or_create_global_step()
         g_train_op = model.train(global_step)
         
-        # a saver object which will save all the variables
+        # a Saver object to save the variables without mappings
+        # used for saving checkpoints throughout the entire training progress
         saver = tf.train.Saver(var_list=model.g_svars,
             max_to_keep=1 << 16, save_relative_paths=True)
         
+        # a Saver object to restore the variables with mappings
+        # only for restoring from pre-trained model
         if FLAGS.pretrain_dir and not FLAGS.restore:
-            saver0 = tf.train.Saver(var_list=model.g_rvars)
+            saver_pt = tf.train.Saver(var_list=model.g_rvars)
         
         # save the graph
         saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
@@ -192,7 +195,7 @@ def train():
         # monitored session
         gpu_options = tf.GPUOptions(allow_growth=True)
         config = tf.ConfigProto(gpu_options=gpu_options,
-            log_device_placement=FLAGS.log_device_placement)
+            allow_soft_placement=True, log_device_placement=FLAGS.log_device_placement)
         
         with tf.train.MonitoredTrainingSession(
                 checkpoint_dir=FLAGS.train_dir,
@@ -207,7 +210,7 @@ def train():
                 run_metadata = tf.RunMetadata()
             # restore pre-trained model
             if FLAGS.pretrain_dir and not FLAGS.restore:
-                saver0.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
+                saver_pt.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
             # get variables
             val_window_ = sess.run(val_window)
             val_window_ = int(np.round(val_window_))

@@ -65,7 +65,7 @@ def setup():
     # create session
     gpu_options = tf.GPUOptions(allow_growth=True)
     config = tf.ConfigProto(gpu_options=gpu_options,
-        log_device_placement=FLAGS.log_device_placement)
+        allow_soft_placement=True, log_device_placement=FLAGS.log_device_placement)
     sess = tf.Session(config=config)
 
     # initialize rng with a deterministic seed
@@ -124,8 +124,8 @@ def test():
         
         model.build_model(images_lr)
         
-        # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_svars)
+        # a Saver object to restore the variables with mappings
+        saver = tf.train.Saver(var_list=model.g_rvars)
         
         # get output
         images_sr = tf.get_default_graph().get_tensor_by_name('Output:0')

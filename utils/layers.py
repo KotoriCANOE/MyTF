@@ -149,7 +149,12 @@ def apply_batch_norm(last, decay=0.999, is_training=False, data_format='NHWC',
     if decay:
         return tf.contrib.layers.batch_norm(last, decay=decay, center=True, scale=True,
             fused=True, is_training=is_training, variables_collections=collection,
-            data_format=data_format)
+            data_format=data_format, renorm=False, renorm_decay=0.99)
+        '''
+        return tf.layers.batch_normalization(last, axis=1 if data_format == 'NCHW' else -1,
+            momentum=decay, center=True, scale=True, training=is_training, trainable=True,
+            reuse=None, renorm=False, renorm_momentum=0.99, fused=True)
+        '''
     else:
         return last
 
