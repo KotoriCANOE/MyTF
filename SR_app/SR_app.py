@@ -26,9 +26,9 @@ tf.app.flags.DEFINE_boolean('recursive', True,
                            """Recursively search all the files in 'src_dir'.""")
 tf.app.flags.DEFINE_string('data_format', 'NCHW', # 'NHWC'
                             """Data layout format.""")
-tf.app.flags.DEFINE_integer('patch_height', 360,
+tf.app.flags.DEFINE_integer('patch_height', 512,
                             """Max patch height.""")
-tf.app.flags.DEFINE_integer('patch_width', 360,
+tf.app.flags.DEFINE_integer('patch_width', 512,
                             """Max patch width.""")
 tf.app.flags.DEFINE_integer('patch_pad', 8,
                             """Padding around patches.""")
@@ -36,6 +36,10 @@ tf.app.flags.DEFINE_integer('threads', 0,
                             """Concurrent multi-threading Python execution.""")
 tf.app.flags.DEFINE_integer('sess_threads', 1,
                             """Maximum number of concurrent running TensorFlow sessions.""")
+tf.app.flags.DEFINE_float('memory_fraction', 1.0,
+                            """Maximum allowed fraction of memory to allocate.""")
+tf.app.flags.DEFINE_string('device', 'GPU:0',
+                            """Preferred device to use.""")
 
 # stderr print
 def eprint(*args, **kwargs):
@@ -45,7 +49,7 @@ def eprint(*args, **kwargs):
 # API
 class SRFilter:
     def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2,
-                 sess_threads=1, memory_fraction=1):
+                 sess_threads=1, memory_fraction=1.0, device='GPU:0'):
         # arXiv 1509.09308
         # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
         os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
@@ -53,6 +57,8 @@ class SRFilter:
         self.data_format = data_format
         self.scaling = scaling
         self.memory_fraction = memory_fraction
+        self.device = '/device:{}'.format(device)
+        
         self._create_graph()
         self._create_session()
         self._restore_graph(model_dir)
@@ -64,19 +70,22 @@ class SRFilter:
     def _create_session(self):
         gpu_options = tf.GPUOptions(allow_growth=True,
             per_process_gpu_memory_fraction=self.memory_fraction)
-        config = tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False)
+        config = tf.ConfigProto(gpu_options=gpu_options,
+            allow_soft_placement=True, log_device_placement=False)
         self.sess = tf.Session(graph=self.graph, config=config)
     
     def _restore_graph(self, model_dir):
-        # force load contrib ops
+        # force loading contrib ops
         # https://github.com/tensorflow/tensorflow/issues/10130
         dir(tf.contrib)
         # load meta graph and restore variables
         with self.graph.as_default():
-            saver = tf.train.import_meta_graph(os.path.join(model_dir, 'model.meta'))
-            if saver is None:
-                raise ValueError('Failed to import meta graph!')
-            saver.restore(self.sess, os.path.join(model_dir, 'model'))
+            with tf.device(self.device):
+                saver = tf.train.import_meta_graph(os.path.join(model_dir, 'model.meta'),
+                    clear_devices=True)
+                if saver is None:
+                    raise ValueError('Failed to import meta graph!')
+                saver.restore(self.sess, os.path.join(model_dir, 'model'))
         # access placeholders variables
         self.input = self.graph.get_tensor_by_name('Input:0')
         self.output = self.graph.get_tensor_by_name('Output:0')
@@ -234,7 +243,8 @@ def main(argv=None):
     if not os.path.exists(FLAGS.dst_dir): os.makedirs(FLAGS.dst_dir)
     src_files = listdir_files(FLAGS.src_dir, FLAGS.recursive, extensions)
     # initialization
-    filter = SRFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.scaling, FLAGS.sess_threads)
+    filter = SRFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.scaling,
+        FLAGS.sess_threads, FLAGS.memory_fraction, FLAGS.device)
     # worker - read, process and save image files
     def worker(q, t):
         msg = '{}: '.format(t) if thread_num > 1 else ''

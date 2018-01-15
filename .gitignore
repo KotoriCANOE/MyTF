@@ -13,6 +13,9 @@ Thumbs.db
 *.gif
 *.svg
 *.psd
+*.jp2
+*.jxr
+*.webp
 
 # Dataset
 *.npy*
