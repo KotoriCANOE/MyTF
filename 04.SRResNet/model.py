@@ -30,13 +30,13 @@ tf.app.flags.DEFINE_integer('k_resize', 7,
                             """Kernel size for the resize layer.""")
 tf.app.flags.DEFINE_integer('g_depth', 8,
                             """Depth of the network: number of layers, residual blocks, etc.""")
-tf.app.flags.DEFINE_integer('channels', 80,
+tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
-tf.app.flags.DEFINE_integer('channels2', 40,
+tf.app.flags.DEFINE_integer('channels2', 32,
                             """Number of features after resize conv.""")
 tf.app.flags.DEFINE_float('batch_norm', 0.99,
                             """Moving average decay for Batch Normalization.""")
-tf.app.flags.DEFINE_string('activation', 'su',
+tf.app.flags.DEFINE_string('activation', 'swish',
                             """Activation function used.""")
 tf.app.flags.DEFINE_integer('use_se', 1,
                             """Apply Squeeze and Excitation activation."""

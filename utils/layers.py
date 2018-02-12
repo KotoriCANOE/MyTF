@@ -475,6 +475,7 @@ def subpixel_conv2d(last, ksize, out_channels=None,
     else:
         out_size = [shape[1] * scaling[0], shape[2] * scaling[1]]
         strides = [1, scaling[0], scaling[1], 1]
+    '''
     # deconvolution 2D
     last = deconv2d(last, ksize, out_channels=out_channels, out_size=out_size,
         stride=strides, padding=padding, data_format=data_format,
@@ -494,11 +495,5 @@ def subpixel_conv2d(last, ksize, out_channels=None,
         batch_norm=batch_norm, is_training=is_training, activation=activation,
         initializer=initializer, init_factor=init_factor, wd=wd, collection=collection)
     # periodic shuffling
-    #last = tf.depth_to_space(last, scaling[0], data_format=data_format)
-    if data_format == 'NCHW':
-        last = utils.image.NCHW2NHWC(last)
-    last = tf.depth_to_space(last, scaling[0])
-    if data_format == 'NCHW':
-        last = utils.image.NHWC2NCHW(last)
+    last = tf.depth_to_space(last, scaling[0], data_format=data_format)
     return last
-    '''

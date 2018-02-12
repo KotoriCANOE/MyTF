@@ -20,7 +20,7 @@ FLAGS = tf.app.flags.FLAGS
 # parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
-tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
+tf.app.flags.DEFINE_string('train_dir', './train{postfix}.tmp',
                            """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_string('pretrain_dir', '',
                            """Directory where to load pre-trained model.""")
@@ -263,16 +263,25 @@ def train():
                             val_window_ = int(np.round(val_window_))
                             print('    learning rate decayed to {}'.format(lr_))
 
+# stderr print
+def eprint(*args, **kwargs):
+    import sys
+    print(*args, file=sys.stderr, **kwargs)
+
 # main
 def main(argv=None):
+    import shutil
     # arXiv 1509.09308
     # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
     os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
     
+    FLAGS.train_dir = FLAGS.train_dir.format(postfix=FLAGS.postfix)
+    
     if not FLAGS.restore:
-        if tf.gfile.Exists(FLAGS.train_dir):
-            tf.gfile.DeleteRecursively(FLAGS.train_dir)
-        tf.gfile.MakeDirs(FLAGS.train_dir)
+        eprint('Removed :' + FLAGS.train_dir)
+        if os.path.exists(FLAGS.train_dir):
+            shutil.rmtree(FLAGS.train_dir)
+        os.makedirs(FLAGS.train_dir)
     train()
 
 if __name__ == '__main__':

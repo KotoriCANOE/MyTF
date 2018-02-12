@@ -18,9 +18,9 @@ FLAGS = tf.app.flags.FLAGS
 # parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
-tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
+tf.app.flags.DEFINE_string('train_dir', './train{postfix}.tmp',
                            """Directory where to read checkpoint.""")
-tf.app.flags.DEFINE_string('test_dir', './test{}.tmp'.format(FLAGS.postfix),
+tf.app.flags.DEFINE_string('test_dir', './test{postfix}.tmp',
                            """Directory where to write event logs and test results.""")
 tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Test',
                            """Directory where stores the dataset.""")
@@ -247,17 +247,27 @@ def test():
     
     print('')
 
+# stderr print
+def eprint(*args, **kwargs):
+    import sys
+    print(*args, file=sys.stderr, **kwargs)
+
 # main
 def main(argv=None):
+    import shutil
     # arXiv 1509.09308
     # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
     os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
     
-    if not tf.gfile.IsDirectory(FLAGS.train_dir):
+    FLAGS.train_dir = FLAGS.train_dir.format(postfix=FLAGS.postfix)
+    FLAGS.test_dir = FLAGS.test_dir.format(postfix=FLAGS.postfix)
+    
+    if not os.path.exists(FLAGS.train_dir):
         raise FileNotFoundError('Could not find folder {}'.format(FLAGS.train_dir))
-    if tf.gfile.Exists(FLAGS.test_dir):
-        tf.gfile.DeleteRecursively(FLAGS.test_dir)
-    tf.gfile.MakeDirs(FLAGS.test_dir)
+    if os.path.exists(FLAGS.test_dir):
+        eprint('Removed :' + FLAGS.test_dir)
+        shutil.rmtree(FLAGS.test_dir)
+    os.makedirs(FLAGS.test_dir)
     test()
 
 if __name__ == '__main__':

@@ -18,7 +18,7 @@ tf.app.flags.DEFINE_integer('scaling', 2,
                             """Up-scaling factor of the model.""")
 tf.app.flags.DEFINE_string('src_dir', './',
                            """Directory where the image files are to be processed.""")
-tf.app.flags.DEFINE_string('dst_dir', os.path.join(FLAGS.src_dir, 'SR_results'),
+tf.app.flags.DEFINE_string('dst_dir', '{src_dir}/SR_results',
                            """Directory where to write the processed images.""")
 tf.app.flags.DEFINE_string('dst_postfix', '.SR',
                            """Postfix added to the processed filenames.""")
@@ -230,6 +230,8 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
 def main(argv=None):
     from skimage import io
     from skimage import transform
+    
+    FLAGS.dst_dir = FLAGS.dst_dir.format(src_dir=FLAGS.src_dir)
     
     extensions = ['.jpeg', '.jpg', '.png', '.bmp', '.webp', '.tif', '.tiff', '.jp2']
     dst_postfix = FLAGS.dst_postfix + '.png'

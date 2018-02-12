@@ -14,13 +14,13 @@ tf.app.flags.DEFINE_string('graph_dir', './graph.tmp',
                            """Directory where to write meta graph and data.""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
-tf.app.flags.DEFINE_boolean('use_cpu', False,
-                            """Force using CPU.""")
-tf.app.flags.DEFINE_string('data_format', 'NHWC' if FLAGS.use_cpu else 'NCHW',
+tf.app.flags.DEFINE_string('device', 'GPU:0',
+                            """Preferred device to use.""")
+tf.app.flags.DEFINE_string('data_format', 'NCHW',
                             """Data layout format.""")
-tf.app.flags.DEFINE_integer('patch_height', 512,
+tf.app.flags.DEFINE_integer('patch_height', 1024,
                             """Block size y.""")
-tf.app.flags.DEFINE_integer('patch_width', 512,
+tf.app.flags.DEFINE_integer('patch_width', 1024,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 1,
                             """Batch size.""")
@@ -279,6 +279,14 @@ def ShuffleNet(last, group_num=8):
     last = tf.identity(last, name='output')
     return last
 
+# setup tensorflow and return session
+def setup():
+    gpu_options = tf.GPUOptions(allow_growth=True)
+    config = tf.ConfigProto(gpu_options=gpu_options,
+        allow_soft_placement=True, log_device_placement=False)
+    sess = tf.Session(config=config)
+    return sess
+
 def bench():
     # initialization
     channels = FLAGS.channels
@@ -293,7 +301,7 @@ def bench():
         g = tf.Graph()
         graphs.append(g)
         with g.as_default():
-            with g.device('/cpu:0' if FLAGS.use_cpu else None):
+            with g.device('/device:{}'.format(FLAGS.device)):
                 data = tf.placeholder(tf.float32, shape)
                 func(data)
     
@@ -309,10 +317,7 @@ def bench():
     add_res(lambda data: ShuffleNet(data, 8))
 
     # session
-    loop = 10 if FLAGS.use_cpu else 100
-    config = tf.ConfigProto(log_device_placement=False)
-    config.gpu_options.allow_growth = True
-
+    loop = 10 if FLAGS.device[:3].lower() == 'cpu' else 100
     next_data = np.empty(shape, dtype=np.float32)
     feed_dict = {'input:0': next_data}
     
@@ -320,19 +325,14 @@ def bench():
     for g in graphs:
         num += 1
         with g.as_default():
-            print(g)
             output = g.get_tensor_by_name('output:0')
-            with tf.Session(config=config) as sess:
+            with setup() as sess:
                 # initialize variables
                 sess.run(tf.global_variables_initializer())
                 # save the graph
                 saver = tf.train.Saver()
-                saver.export_meta_graph(os.path.join(FLAGS.graph_dir, 'model{}.pbtxt'.format(num)),
-                    as_text=True, clear_devices=True)#, clear_extraneous_savers=True)
-                saver.export_meta_graph(os.path.join(FLAGS.graph_dir, 'model{}.meta'.format(num)),
-                    as_text=False, clear_devices=True)#, clear_extraneous_savers=True)
                 saver.save(sess, os.path.join(FLAGS.graph_dir, 'model{}'.format(num)),
-                           write_meta_graph=False, write_state=False)
+                           write_meta_graph=True, write_state=False)
                 # warm-up
                 sess.run(output, feed_dict)
                 # run options
