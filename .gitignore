@@ -29,6 +29,8 @@ events.out.*
 model.data*
 model.index
 model.meta
+model.graphdef
+model.pb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

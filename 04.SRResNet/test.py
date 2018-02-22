@@ -27,7 +27,7 @@ tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Test',
 tf.app.flags.DEFINE_boolean('progress', False,
                             """Whether to test across the entire training procedure.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
-                            """Initialize with specified random seed.""")
+                            """Initialize with specific random seed. Negative value to use system default.""")
 tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 16,
@@ -61,18 +61,15 @@ def reset_random(seed=0):
     np.random.seed(seed)
 
 # setup tensorflow and return session
-def setup():
+def session():
+    # initialize rng with a deterministic seed
+    if FLAGS.random_seed >= 0:
+        reset_random(FLAGS.random_seed)
     # create session
     gpu_options = tf.GPUOptions(allow_growth=True)
     config = tf.ConfigProto(gpu_options=gpu_options,
         allow_soft_placement=True, log_device_placement=FLAGS.log_device_placement)
     sess = tf.Session(config=config)
-
-    # initialize rng with a deterministic seed
-    reset_random(FLAGS.random_seed)
-
-    #summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)
-    #return sess, summary_writer
     return sess
 
 # losses
@@ -92,6 +89,7 @@ def get_losses(ref, pred):
 
 # testing
 def test():
+    # get dataset
     files = helper.listdir_files(FLAGS.dataset,
                                  filter_ext=['.jpeg', '.jpg', '.png'])
     steps_per_epoch = len(files) // FLAGS.batch_size
@@ -106,7 +104,7 @@ def test():
         # dataset
         with tf.device('/cpu:0'):
             test_lr, test_hr = inputs(FLAGS, files, is_testing=True)
-        with setup() as sess:
+        with session() as sess:
             for _ in range(max_steps):
                 _lr, _hr = sess.run((test_lr, test_hr))
                 test_lr_batches.append(_lr)
@@ -155,7 +153,7 @@ def test():
             ret_pngs.extend(helper.BatchPNG(images_bicubic, FLAGS.batch_size))
         
         # initialize session
-        sess = setup()
+        sess = session()
         
         # test latest checkpoint
         model_file = tf.train.latest_checkpoint(FLAGS.train_dir)

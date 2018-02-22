@@ -32,6 +32,8 @@ tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
 tf.app.flags.DEFINE_integer('timeline_steps', 911,
                             """Number of steps to save timeline.""")
+tf.app.flags.DEFINE_integer('random_seed', -1,
+                            """Initialize with specific random seed. Negative value to use system default.""")
 tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 16,
@@ -97,9 +99,29 @@ class LoggerHook(tf.train.SessionRunHook):
             print(format_str.format(datetime.now(), self._epoch, self._step,
                                     loss, examples_per_sec, sec_per_batch))
 
+# reset random seeds
+def reset_random(seed=0):
+    import random
+    tf.set_random_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+# setup tensorflow and return session
+def session():
+    # create session
+    gpu_options = tf.GPUOptions(allow_growth=True)
+    config = tf.ConfigProto(gpu_options=gpu_options,
+        allow_soft_placement=True, log_device_placement=FLAGS.log_device_placement)
+    return tf.Session(config=config)
+
 # training
 def train():
+    # set deterministic random seed
     import random
+    if FLAGS.random_seed >= 0:
+        reset_random(FLAGS.random_seed)
+    
+    # get dataset
     files = helper.listdir_files(FLAGS.dataset,
                                  filter_ext=['.jpeg', '.jpg', '.png'])
     random.shuffle(files)
@@ -123,9 +145,7 @@ def train():
             with tf.device('/cpu:0'):
                 val_lr, val_hr = inputs(FLAGS, val_files, is_training=True)
             # session
-            gpu_options = tf.GPUOptions(allow_growth=True)
-            config = tf.ConfigProto(gpu_options=gpu_options)
-            with tf.Session(config=config) as sess:
+            with session() as sess:
                 for _ in range(val_batches):
                     _lr, _hr = sess.run((val_lr, val_hr))
                     val_lr_batches.append(_lr)
@@ -212,9 +232,10 @@ def train():
             if FLAGS.pretrain_dir and not FLAGS.restore:
                 saver_pt.restore(sess, os.path.join(FLAGS.pretrain_dir, 'model'))
             # get variables
-            val_window_ = sess.run(val_window)
-            val_window_ = int(np.round(val_window_))
-            lr_decay_last = val_window_
+            if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
+                val_window_ = sess.run(val_window)
+                val_window_ = int(np.round(val_window_))
+                lr_decay_last = val_window_
             # training session call
             def run_sess(options=None, run_metadata=None):
                 mon_sess.run(g_train_op, options=options, run_metadata=run_metadata)
@@ -278,8 +299,8 @@ def main(argv=None):
     FLAGS.train_dir = FLAGS.train_dir.format(postfix=FLAGS.postfix)
     
     if not FLAGS.restore:
-        eprint('Removed :' + FLAGS.train_dir)
         if os.path.exists(FLAGS.train_dir):
+            eprint('Removed :' + FLAGS.train_dir)
             shutil.rmtree(FLAGS.train_dir)
         os.makedirs(FLAGS.train_dir)
     train()

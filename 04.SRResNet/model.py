@@ -34,7 +34,7 @@ tf.app.flags.DEFINE_integer('channels', 64,
                             """Number of features in hidden layers.""")
 tf.app.flags.DEFINE_integer('channels2', 32,
                             """Number of features after resize conv.""")
-tf.app.flags.DEFINE_float('batch_norm', 0.99,
+tf.app.flags.DEFINE_float('batch_norm', 0.999,
                             """Moving average decay for Batch Normalization.""")
 tf.app.flags.DEFINE_string('activation', 'swish',
                             """Activation function used.""")
@@ -43,21 +43,21 @@ tf.app.flags.DEFINE_integer('use_se', 1,
                             """0: not used; 1: global average SE; 2: local average SE""")
 
 # training parameters
-tf.app.flags.DEFINE_integer('initializer', 4,
+tf.app.flags.DEFINE_integer('initializer', 3,
                             """Weights initialization method.""")
 tf.app.flags.DEFINE_float('init_factor', 1.0,
                             """Weights initialization STD factor for conv layers without activation.""")
 tf.app.flags.DEFINE_float('init_activation', 2.0,
                             """Weights initialization STD factor for conv layers with activation.""")
-tf.app.flags.DEFINE_float('weight_decay', 2e-6,
+tf.app.flags.DEFINE_float('weight_decay', 1e-6,
                             """L2 regularization weight decay factor""")
 tf.app.flags.DEFINE_float('learning_rate', 1e-3,
                             """Initial learning rate""")
 tf.app.flags.DEFINE_float('lr_min', 0,
                             """Minimum learning rate""")
-tf.app.flags.DEFINE_float('lr_decay_steps', -200, #500,
+tf.app.flags.DEFINE_float('lr_decay_steps', -200, #500, 500
                             """Steps after which learning rate decays""")
-tf.app.flags.DEFINE_float('lr_decay_factor', 0.29, #0.01,
+tf.app.flags.DEFINE_float('lr_decay_factor', 0.29, #0.01, -0.2
                             """Learning rate decay factor""")
 tf.app.flags.DEFINE_float('learning_momentum', 0.9,
                             """momentum for MomentumOptimizer""")
@@ -69,7 +69,7 @@ tf.app.flags.DEFINE_float('epsilon', 1e-8,
                             """Fuzz term to avoid numerical instability""")
 tf.app.flags.DEFINE_float('loss_moving_average', 0, #0.9,
                             """The decay to use for the moving average of losses""")
-tf.app.flags.DEFINE_float('train_moving_average', 0.9999,
+tf.app.flags.DEFINE_float('train_moving_average', 0.999,
                             """The decay to use for the moving average of trainable variables""")
 
 # model

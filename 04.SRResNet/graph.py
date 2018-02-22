@@ -18,7 +18,9 @@ tf.app.flags.DEFINE_string('train_dir', './train{postfix}.tmp',
 tf.app.flags.DEFINE_string('graph_dir', './model{postfix}.tmp',
                            """Directory where to write meta graph and data.""")
 
+# setup tensorflow and return session
 def session():
+    # create session
     gpu_options = tf.GPUOptions(allow_growth=True)
     config = tf.ConfigProto(gpu_options=gpu_options,
         allow_soft_placement=True, log_device_placement=False)

@@ -92,6 +92,8 @@ def plot1(postfix, labels=None, name=None):
 #plot1([199, 201, 202], ['Pre: Medium', 'Pre: Heavy (from Medium)', 'Pre: Heavy (TF 1.4)'], '202')
 #plot1([202, 203, 204, 205, 206, 207], ['subpixel conv: 3+5', 'subpixel conv: 4+4', 'deconv: 4+4', 'resize deconv: 4+4', 'resize conv: 4+4', 'resize conv: 3+5'], '203')
 #plot1([208, 209, 207, 210, 211], ['resize conv: 3+3', 'resize conv: 3+4', 'resize conv: 3+5', 'resize conv: 3+7', 'resize conv: 3+5'], '207')
+#plot1([207, 220, 221], ['TF 1.4, ms=1, c80 b8', 'TF 1.5, ms=2, c64 b8', 'TF 1.5, ms=2, c32 b16'], '220')
+#plot1([207, 220, 222], ['TF 1.4, ms=1, c80 b8', 'TF 1.5, ms=2, c64 b8', 'TF 1.5, ms=1, c64 b8'], '222')
 
 
 
@@ -101,5 +103,16 @@ def plot1(postfix, labels=None, name=None):
 #plot1([1001, 1007, 1008, 1009], ['original resize, multi=3', 'channels=64, mod resize 3, multi=2', 'channels=64, mod resize 4, multi=2', 'channels=64, mod resize 5, multi=2'], '1007')
 #plot1([1009, 1010, 1011, 1012], [], '1009')
 #plot1([1012, 1013, 1014, 1015, 1016], [], '1012')
+#plot1([1014, 1016, 1020, 1021], [], '1020')
+#plot1([1014, 1020, 1022, 1023, 1024], [], '1022')
+#plot1([1023, 1025], [], '1023')
+#plot1([1025, 1026, 1027, 1028], [], '1025')
+#plot1([1029, 1030], [], '1029')
+#plot1([1031, 1032, 1033, 1034, 1035], [], '1031')
+#plot1([1032, 1036, 1037], [], '1036')
+#plot1([1036, 1038, 1039], [], '1038')
+#plot1([1036, 1040, 1041, 1042], [], '1040')
+#plot1([1036, 1043, 1044], [], '1043')
+plot1([1036, 1045, 1046], [], '1045')
 
 
