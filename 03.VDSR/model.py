@@ -67,7 +67,7 @@ tf.app.flags.DEFINE_float('gradient_clipping', 1e-3,
                             """Gradient clipping factor""")
 tf.app.flags.DEFINE_float('loss_moving_average', 0, #0.9,
                             """The decay to use for the moving average of losses""")
-tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
+tf.app.flags.DEFINE_float('train_moving_average', 0.9999,
                             """The decay to use for the moving average of trainable variables""")
 
 # model
@@ -245,10 +245,16 @@ class SRmodel(object):
             tf.identity(self.images_sr, name='Output')
         
         # trainable and model variables
-        t_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
-        m_vars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
-        self.g_tvars = t_vars
-        self.g_mvars = list(set(t_vars + m_vars))
+        self.g_tvars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator')
+        self.g_mvars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='generator')
+        self.g_svars = list(set(self.g_tvars + self.g_mvars))
+        
+        # track the moving averages of all trainable variables
+        if not is_training and self.train_moving_average > 0:
+            ema = tf.train.ExponentialMovingAverage(self.train_moving_average,
+                name='train_moving_average')
+            g_ema_op = ema.apply(self.g_svars)
+            self.g_svars = {ema.average_name(var): var for var in self.g_svars}
         
         # return generated results
         return self.images_sr
@@ -277,6 +283,9 @@ class SRmodel(object):
             self.learning_rate, self.lr_decay_steps, self.lr_decay_factor,
             self.lr_min, self.weight_decay))
         
+        # training ops
+        g_train_ops = []
+        
         # dependency need to be updated
         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
         
@@ -287,23 +296,17 @@ class SRmodel(object):
         if loss_averages_op: update_ops.append(loss_averages_op)
         
         # decay the learning rate exponentially based on the number of steps
-        g_lr = tf.constant(self.learning_rate, dtype=self.dtype)
-        if self.lr_decay_steps > 0 and self.lr_decay_factor != 1:
-            g_lr = tf.train.exponential_decay(g_lr, global_step,
-                self.lr_decay_steps, self.lr_decay_factor, staircase=True)
+        if self.lr_decay_steps > 0 and self.lr_decay_factor != 0:
+            g_lr = tf.train.exponential_decay(self.learning_rate, global_step,
+                self.lr_decay_steps, 1 - self.lr_decay_factor, staircase=True)
             if self.lr_min > 0:
                 g_lr = tf.maximum(tf.constant(self.lr_min, dtype=self.dtype), g_lr)
+        else:
+            g_lr = self.learning_rate
         tf.summary.scalar('g_learning_rate', g_lr)
-        
-        # training ops
-        g_train_ops = []
         
         # optimizer
         g_opt = tf.train.MomentumOptimizer(g_lr, momentum=self.learning_momentum, use_nesterov=True)
-        #g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
-        #    beta2=self.learning_beta2, epsilon=self.epsilon)
-        #g_opt = tf.contrib.opt.NadamOptimizer(g_lr, beta1=self.learning_beta1,
-        #    beta2=self.learning_beta2, epsilon=self.epsilon)
         
         # compute gradients
         with tf.control_dependencies(update_ops):
@@ -312,12 +315,9 @@ class SRmodel(object):
         # gradient clipping
         if self.gradient_clipping > 0:
             with tf.variable_scope('gradient_clipping') as scope:
-                #g_clip_value = tf.constant(self.gradient_clipping, dtype=self.dtype) / g_lr
                 g_clip_value = tf.constant(self.gradient_clipping, dtype=self.dtype)
                 g_grads_and_vars = [(tf.clip_by_value(grad, -g_clip_value, g_clip_value),
                                     var) for grad, var in g_grads_and_vars]
-                #g_grads_and_vars = [(tf.constant(0, dtype=self.dtype, shape=grad.get_shape()),
-                #                    var) for grad, var in g_grads_and_vars]
         
         # apply gradients
         g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
@@ -331,10 +331,11 @@ class SRmodel(object):
         
         # track the moving averages of all trainable variables
         if self.train_moving_average > 0:
-            variable_averages = tf.train.ExponentialMovingAverage(
-                    self.train_moving_average, global_step, name='train_moving_average')
-            variable_averages_op = variable_averages.apply(tf.trainable_variables())
-            g_train_ops.append(variable_averages_op)
+            ema = tf.train.ExponentialMovingAverage(self.train_moving_average,
+                global_step, name='train_moving_average')
+            g_ema_op = ema.apply(self.g_svars)
+            g_train_ops.append(g_ema_op)
+            self.g_svars = [ema.average(var) for var in self.g_svars]
         
         # generate operation
         with tf.control_dependencies(g_train_ops):

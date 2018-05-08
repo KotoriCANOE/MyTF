@@ -6,7 +6,7 @@ sys.path.append('..')
 from utils import helper
 
 from input import inputs
-import model
+from model import MRSmodel
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
@@ -14,6 +14,7 @@ print('Current working directory:\n    {}\n'.format(os.getcwd()))
 # flags
 FLAGS = tf.app.flags.FLAGS
 
+# parameters
 tf.app.flags.DEFINE_string('postfix', '',
                             """Postfix added to train_dir, test_dir, test files, etc.""")
 tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
@@ -30,12 +31,6 @@ tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
-tf.app.flags.DEFINE_string('data_format', 'NHWC', # 'NCHW', 'NHWC',
-                            """Data layout format.""")
-tf.app.flags.DEFINE_integer('seq_size', 2048,
-                            """Size of the 1-D sequence.""")
-tf.app.flags.DEFINE_integer('num_labels', 16,
-                            """Number of labels.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
 tf.app.flags.DEFINE_float('smoothing', 0.25,
@@ -92,9 +87,6 @@ def get_losses(labels_gt, labels_pd):
     
     return mse, mad, mse_valid, mad_valid, FP, FN, error_ratio
 
-def total_loss():
-    return tf.losses.get_total_loss()
-
 # testing
 def test():
     # label names
@@ -113,7 +105,7 @@ def test():
         LABEL_NAMES = list(range(FLAGS.num_labels))
 
     # get dataset files
-    labels_file = os.path.join(FLAGS.dataset, 'labels\labels.npy')
+    labels_file = os.path.join(FLAGS.dataset, 'labels/labels.npy')
     files = helper.listdir_files(FLAGS.dataset, recursive=False,
                                  filter_ext=['.npy'],
                                  encoding=True)
@@ -128,7 +120,7 @@ def test():
         
         # pre-processing for input
         with tf.device('/cpu:0'):
-            spectrum, labels_gt = inputs(files, labels_file, epoch_size, is_testing=True)
+            spectrum, labels_gt = inputs(FLAGS, files, labels_file, epoch_size, is_testing=True)
         
         # model inference and losses
         labels_pd = model.inference(spectrum, is_training=False)

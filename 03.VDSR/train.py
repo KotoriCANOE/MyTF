@@ -31,7 +31,7 @@ tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
 tf.app.flags.DEFINE_integer('timeline_steps', 911,
                             """Number of steps to save timeline.""")
-tf.app.flags.DEFINE_integer('threads', 16,
+tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
@@ -126,12 +126,10 @@ def train():
         g_train_op = model.train(global_step)
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_mvars, max_to_keep=1 << 16,
-                               save_relative_paths=True)
+        saver = tf.train.Saver(var_list=model.g_svars,
+            max_to_keep=1 << 16, save_relative_paths=True)
         
         # save the graph
-        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.pbtxt'),
-            as_text=True, clear_devices=True, clear_extraneous_savers=True)
         saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
             as_text=False, clear_devices=True, clear_extraneous_savers=True)
         

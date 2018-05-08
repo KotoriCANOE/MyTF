@@ -23,15 +23,17 @@ tf.app.flags.DEFINE_string('train_dir', './train{}.tmp'.format(FLAGS.postfix),
                            """Directory where to write event logs and checkpoint.""")
 tf.app.flags.DEFINE_string('pretrain_dir', './pre_train',
                            """Directory where to load pre-trained model.""")
+tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Train',
+                           """Directory where stores the dataset.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
-tf.app.flags.DEFINE_integer('save_steps', 10000,
+tf.app.flags.DEFINE_integer('save_steps', 5000,
                             """Number of steps to save meta.""")
-tf.app.flags.DEFINE_integer('timeline_steps', 0,
+tf.app.flags.DEFINE_integer('timeline_steps', 911,
                             """Number of steps to save timeline.""")
 tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
-tf.app.flags.DEFINE_integer('threads_py', 4,
+tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
 tf.app.flags.DEFINE_integer('num_epochs', 20,
                             """Number of epochs to run.""")
@@ -45,21 +47,20 @@ tf.app.flags.DEFINE_integer('patch_width', 96,
                             """Block size x.""")
 tf.app.flags.DEFINE_integer('batch_size', 16,
                             """Batch size.""")
-tf.app.flags.DEFINE_integer('buffer_size', 8192,
+tf.app.flags.DEFINE_integer('buffer_size', 65536,
                             """Buffer size for random shuffle.""")
 tf.app.flags.DEFINE_boolean('pre_down', False,
                             """Pre-downscale large image for (probably) higher quality data.""")
 tf.app.flags.DEFINE_float('color_augmentation', 0.05,
                             """Amount of random color augmentations.""")
+tf.app.flags.DEFINE_float('random_resizer', 0,
+                            """value for resizer choice, 0 for random resizer.""")
 tf.app.flags.DEFINE_float('noise_scale', 0.01,
                             """STD of additive Gaussian random noise.""")
 tf.app.flags.DEFINE_float('noise_corr', 0.75,
                             """Spatial correlation of the Gaussian random noise.""")
 tf.app.flags.DEFINE_boolean('jpeg_coding', True,
                             """Using JPEG to generate compression artifacts for data.""")
-
-# constants
-TRAINSET_PATH = r'..\Dataset.SR\Train'
 
 # helper class
 class LoggerHook(tf.train.SessionRunHook):
@@ -96,7 +97,7 @@ class LoggerHook(tf.train.SessionRunHook):
 # training
 def train():
     import random
-    files = helper.listdir_files(TRAINSET_PATH,
+    files = helper.listdir_files(FLAGS.dataset,
                                  filter_ext=['.jpeg', '.jpg', '.png'],
                                  encoding=True)
     random.shuffle(files)
@@ -125,16 +126,14 @@ def train():
         gd_loss = model.build_train(images_lr, images_hr)
         
         # training step and op
-        global_step = tf.contrib.framework.get_or_create_global_step()
+        global_step = tf.train.get_or_create_global_step()
         g_train_op, d_train_op = model.train(global_step)
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_vars, max_to_keep=1 << 16,
-                               save_relative_paths=True)
+        saver = tf.train.Saver(var_list=model.g_svars,
+            max_to_keep=1 << 16, save_relative_paths=True)
         
         # save the graph
-        saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.pbtxt'),
-            as_text=True, clear_devices=True, clear_extraneous_savers=True)
         saver.export_meta_graph(os.path.join(FLAGS.train_dir, 'model.meta'),
             as_text=False, clear_devices=True, clear_extraneous_savers=True)
         
@@ -166,7 +165,7 @@ def train():
             # run sessions
             while not mon_sess.should_stop():
                 step = tf.train.global_step(sess, global_step)
-                if FLAGS.timeline_steps > 0 and step % FLAGS.timeline_steps == 0:
+                if FLAGS.timeline_steps > 0 and step // FLAGS.timeline_steps < 10 and step % FLAGS.timeline_steps == 0:
                     run_sess(run_options, run_metadata)
                     # Create the Timeline object, and write it to a json
                     tl = timeline.Timeline(run_metadata.step_stats)

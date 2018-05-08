@@ -28,7 +28,7 @@ tf.app.flags.DEFINE_boolean('progress', False,
                             """Whether to test across the entire training procedure.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
                             """Initialize with specified random seed.""")
-tf.app.flags.DEFINE_integer('threads', 16,
+tf.app.flags.DEFINE_integer('threads', 8,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 8,
                             """Number of threads for Dataset process in tf.py_func.""")
@@ -112,7 +112,7 @@ def test():
         model.build_model(images_lr)
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_mvars)
+        saver = tf.train.Saver(var_list=model.g_svars)
         
         # get output
         images_sr = tf.get_default_graph().get_tensor_by_name('Output:0')

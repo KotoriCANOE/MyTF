@@ -46,7 +46,14 @@ tf.app.flags.DEFINE_float('mse_thresh', 0.005,
 tf.app.flags.DEFINE_float('mad_thresh', 0.05,
                             """MAD lower than this value will be considered as correct prediction.""")
 
-# setup tensorflow
+# reset random seeds
+def reset_random(seed=0):
+    import random
+    tf.set_random_seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+
+# setup tensorflow and return session
 def setup():
     # create session
     gpu_options = tf.GPUOptions(allow_growth=True)
@@ -55,14 +62,11 @@ def setup():
     sess = tf.Session(config=config)
 
     # initialize rng with a deterministic seed
-    import random
-    with sess.graph.as_default():
-        tf.set_random_seed(FLAGS.random_seed)
-    random.seed(FLAGS.random_seed)
-    np.random.seed(FLAGS.random_seed)
+    reset_random(FLAGS.random_seed)
 
-    summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)
-    return sess, summary_writer
+    #summary_writer = tf.summary.FileWriter(FLAGS.test_dir, sess.graph)
+    #return sess, summary_writer
+    return sess
 
 # losses
 def get_losses(ref, pred):
@@ -119,9 +123,6 @@ def test():
     files = files[:epoch_size]
     
     with tf.Graph().as_default():
-        # setup global tensorflow state
-        sess, summary_writer = setup()
-        
         # pre-processing for input
         with tf.device('/cpu:0'):
             spectrum, labels_ref = inputs(FLAGS, files, labels_file, epoch_size, is_testing=True)
@@ -131,6 +132,9 @@ def test():
             seq_size=FLAGS.seq_size, num_labels=FLAGS.num_labels)
         
         model.build_model(spectrum)
+        
+        # a saver object which will save all the variables
+        saver = tf.train.Saver(var_list=model.g_mvars)
         
         # get output
         labels_pred = tf.get_default_graph().get_tensor_by_name('Output:0')
@@ -153,44 +157,42 @@ def test():
             mfiles = [tf.train.latest_checkpoint(FLAGS.train_dir)]
         
         for model_file in mfiles:
-            # restore variables from checkpoint
-            saver = tf.train.Saver()
-            saver.restore(sess, model_file)
-            
-            # run session
-            sum_loss = [0 for _ in range(len(ret_loss))]
-            all_errors = []
-            labels_ref = []
-            labels_pred = []
-            for i in range(max_steps):
-                cur_ret = sess.run(ret)
-                cur_loss = cur_ret[0:len(ret_loss)]
-                cur_errors = cur_ret[len(ret_loss)]
-                labels_ref.append(cur_ret[len(ret_loss) + 1])
-                labels_pred.append(cur_ret[len(ret_loss) + 2])
-                all_errors.append(cur_errors)
-                # monitor losses
-                for _ in range(len(ret_loss)):
-                    sum_loss[_] += cur_loss[_]
-                #print('batch {}, MSE {}, MAD {}, MSE valid {}, MAD valid {}, False Positives {}, False Negatives {}'.format(i, *cur_loss))
-            
-            # summary
-            mean_loss = [l / max_steps for l in sum_loss]
-            mean_loss[2] /= FLAGS.batch_size
-            mean_loss[3] /= FLAGS.batch_size
-            mean_loss[4] /= FLAGS.batch_size * FLAGS.num_labels
-            mean_loss[5] /= FLAGS.batch_size * FLAGS.num_labels
-            print('{} Metabolites'.format(FLAGS.num_labels))
-            print('MSE threshold {}'.format(FLAGS.mse_thresh))
-            print('MAD threshold {}'.format(FLAGS.mad_thresh))
-            print('Totally {} Samples, MSE {}, MAD {}, MSE accuracy {}, MAD accuracy {}, FP rate {}, FN rate {}'.format(epoch_size, *mean_loss))
-            
-            # save stats
-            if FLAGS.progress:
-                model_num = os.path.split(model_file)[1][6:]
-                stats.append(np.array([float(model_num)] + mean_loss))
-        
-        sess.close()
+            with setup() as sess:
+                # restore variables from checkpoint
+                saver.restore(sess, model_file)
+                
+                # run session
+                sum_loss = [0 for _ in range(len(ret_loss))]
+                all_errors = []
+                labels_ref = []
+                labels_pred = []
+                for i in range(max_steps):
+                    cur_ret = sess.run(ret)
+                    cur_loss = cur_ret[0:len(ret_loss)]
+                    cur_errors = cur_ret[len(ret_loss)]
+                    labels_ref.append(cur_ret[len(ret_loss) + 1])
+                    labels_pred.append(cur_ret[len(ret_loss) + 2])
+                    all_errors.append(cur_errors)
+                    # monitor losses
+                    for _ in range(len(ret_loss)):
+                        sum_loss[_] += cur_loss[_]
+                    #print('batch {}, MSE {}, MAD {}, MSE valid {}, MAD valid {}, False Positives {}, False Negatives {}'.format(i, *cur_loss))
+                
+                # summary
+                mean_loss = [l / max_steps for l in sum_loss]
+                mean_loss[2] /= FLAGS.batch_size
+                mean_loss[3] /= FLAGS.batch_size
+                mean_loss[4] /= FLAGS.batch_size * FLAGS.num_labels
+                mean_loss[5] /= FLAGS.batch_size * FLAGS.num_labels
+                print('{} Metabolites'.format(FLAGS.num_labels))
+                print('MSE threshold {}'.format(FLAGS.mse_thresh))
+                print('MAD threshold {}'.format(FLAGS.mad_thresh))
+                print('Totally {} Samples, MSE {}, MAD {}, MSE accuracy {}, MAD accuracy {}, FP rate {}, FN rate {}'.format(epoch_size, *mean_loss))
+                
+                # save stats
+                if FLAGS.progress:
+                    model_num = os.path.split(model_file)[1][6:]
+                    stats.append(np.array([float(model_num)] + mean_loss))
     
     # errors
     import matplotlib.pyplot as plt

@@ -175,14 +175,14 @@ def train():
         g_loss = model.build_train(spectrum, labels_ref)
         
         # training step and op
-        global_step = tf.contrib.framework.get_or_create_global_step()
+        global_step = tf.train.get_or_create_global_step()
         g_train_op = model.train(global_step)
         
         # profiler
         #profiler(train_op)
         
         # a saver object which will save all the variables
-        saver = tf.train.Saver(var_list=model.g_vars, max_to_keep=1 << 16,
+        saver = tf.train.Saver(var_list=model.g_mvars, max_to_keep=1 << 16,
                                save_relative_paths=True)
         
         # save the graph

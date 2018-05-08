@@ -48,8 +48,6 @@ tf.app.flags.DEFINE_float('learning_beta2', 0.999,
                             """beta2 for AdamOptimizer""")
 tf.app.flags.DEFINE_float('epsilon', 1e-8,
                             """Fuzz term to avoid numerical instability""")
-tf.app.flags.DEFINE_float('gradient_clipping', 0, #0.002,
-                            """Gradient clipping factor""")
 tf.app.flags.DEFINE_float('loss_moving_average', 0, #0.9,
                             """The decay to use for the moving average of losses""")
 tf.app.flags.DEFINE_float('train_moving_average', 0, #0.9999,
@@ -82,7 +80,6 @@ class MRSmodel(object):
         self.learning_beta1 = config.learning_beta1
         self.learning_beta2 = config.learning_beta2
         self.epsilon = config.epsilon
-        self.gradient_clipping = config.gradient_clipping
         self.loss_moving_average = config.loss_moving_average
         self.train_moving_average = config.train_moving_average
         
@@ -121,8 +118,8 @@ class MRSmodel(object):
             with tf.variable_scope('conv{}'.format(l)) as scope:
                 last = layers.conv2d(last, ksize=[1, self.k_first], out_channels=channels,
                     stride=[1, 1, 1, 1], padding='SAME', data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=activation,
-                    initializer=initializer, init_factor=init_activation,
+                    batch_norm=None, is_training=is_training, activation=None,
+                    initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
             # residual blocks
             rb = 0
@@ -135,24 +132,36 @@ class MRSmodel(object):
                 if double_channel: channels *= 2
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                        data_format=data_format)
                     last = layers.conv2d(last, ksize=[1, 1], out_channels=channels // 2,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=batch_norm, is_training=is_training, activation=activation,
+                        batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                        data_format=data_format)
                     last = layers.conv2d(last, ksize=[1, 3], out_channels=channels // 2,
                         stride=strides, padding='SAME', data_format=data_format,
-                        batch_norm=batch_norm, is_training=is_training, activation=activation,
+                        batch_norm=None, is_training=is_training, activation=None,
                         initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
+                    last = layers.apply_batch_norm(last, decay=batch_norm,
+                        is_training=is_training, data_format=data_format)
+                    last = layers.apply_activation(last, activation=activation,
+                        data_format=data_format)
                     last = layers.conv2d(last, ksize=[1, 1], out_channels=channels,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=batch_norm, is_training=is_training, activation=None,
-                        initializer=initializer, init_factor=init_factor,
+                        batch_norm=None, is_training=is_training, activation=None,
+                        initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
                     if reduce_size:
@@ -206,11 +215,17 @@ class MRSmodel(object):
             self.spectrum = tf.identity(spectrum, name='Input')
             self.spectrum.set_shape(self.shape)
         
-        # apply generator to inputs
+        # inference inputs
         self.labels_pred = self.inference(self.spectrum, is_training=is_training)
         
         # set outputs
         tf.identity(self.labels_pred, name='Output')
+        
+        # trainable and model variables
+        t_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='inference')
+        m_vars = tf.get_collection(tf.GraphKeys.MODEL_VARIABLES, scope='inference')
+        self.g_tvars = t_vars
+        self.g_mvars = list(set(t_vars + m_vars))
         
         # return inference results
         return self.labels_pred
@@ -228,10 +243,6 @@ class MRSmodel(object):
         
         # build inference losses
         self.g_loss = self.inference_losses(self.labels_ref, self.labels_pred)
-        
-        # trainable variables
-        t_vars = tf.trainable_variables()
-        self.g_vars = [var for var in t_vars if 'inference' in var.name]
         
         # return total loss(es)
         return self.g_loss
@@ -255,36 +266,30 @@ class MRSmodel(object):
         if self.lr_decay_steps > 0 and self.lr_decay_factor != 1:
             g_lr = tf.train.exponential_decay(g_lr, global_step,
                 self.lr_decay_steps, self.lr_decay_factor, staircase=True)
-            g_lr = tf.maximum(self.lr_min, g_lr)
+            if self.lr_min > 0:
+                g_lr = tf.maximum(tf.constant(self.lr_min, dtype=self.dtype), g_lr)
         tf.summary.scalar('g_learning_rate', g_lr)
-        
-        # compute gradients
-        with tf.control_dependencies(update_ops):
-            g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
-                beta2=self.learning_beta2, epsilon=self.epsilon)
-            g_grads_and_vars = g_opt.compute_gradients(self.g_loss, var_list=self.g_vars)
-        
-        # gradient clipping
-        if self.gradient_clipping > 0:
-            g_clip_value = self.gradient_clipping / g_lr
-            g_grads_and_vars = [(tf.clip_by_value(
-                    grad, -g_clip_value, g_clip_value, name='g_gradient_clipping'
-                    ), var) for grad, var in g_grads_and_vars]
         
         # training ops
         g_train_ops = []
         
+        # optimizer
+        g_opt = tf.train.AdamOptimizer(g_lr, beta1=self.learning_beta1,
+            beta2=self.learning_beta2, epsilon=self.epsilon)
+        
+        # compute gradients
+        with tf.control_dependencies(update_ops):
+            g_grads_and_vars = g_opt.compute_gradients(self.g_loss, var_list=self.g_tvars)
+        
         # apply gradient
         g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
-        
-        # add histograms for trainable variables
-        for var in tf.trainable_variables():
-            tf.summary.histogram(var.op.name, var)
         
         # add histograms for gradients
         for grad, var in g_grads_and_vars:
             if grad is not None:
                 tf.summary.histogram(var.op.name + '/gradients', grad)
+            if var is not None:
+                tf.summary.histogram(var.op.name, var)
         
         # track the moving averages of all trainable variables
         if self.train_moving_average > 0:
