@@ -111,11 +111,11 @@ def SS_SSIM(img1, img2, ret_cs=False, mean_metric=True, radius=5, sigma=1.5, L=1
         
         mu1 = tf.nn.conv2d(img1, window, strides=[1,1,1,1], padding='VALID', data_format=data_format)
         mu2 = tf.nn.conv2d(img2, window, strides=[1,1,1,1], padding='VALID', data_format=data_format)
-        mu1_sq = mu1 * mu1
-        mu2_sq = mu2 * mu2
+        mu1_sq = tf.square(mu1)
+        mu2_sq = tf.square(mu2)
         mu1_mu2 = mu1 * mu2
-        sigma1_sq = tf.nn.conv2d(img1*img1, window, strides=[1,1,1,1], padding='VALID', data_format=data_format) - mu1_sq
-        sigma2_sq = tf.nn.conv2d(img2*img2, window, strides=[1,1,1,1], padding='VALID', data_format=data_format) - mu2_sq
+        sigma1_sq = tf.nn.conv2d(tf.square(img1), window, strides=[1,1,1,1], padding='VALID', data_format=data_format) - mu1_sq
+        sigma2_sq = tf.nn.conv2d(tf.square(img2), window, strides=[1,1,1,1], padding='VALID', data_format=data_format) - mu2_sq
         sigma12 = tf.nn.conv2d(img1*img2, window, strides=[1,1,1,1], padding='VALID', data_format=data_format) - mu1_mu2
         l_map = (2.0 * mu1_mu2 + C1) / (mu1_sq + mu2_sq + C1)
         cs_map = (2.0 * sigma12 + C2) / (sigma1_sq + sigma2_sq + C2)

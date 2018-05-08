@@ -1,6 +1,6 @@
 cd /d "%~dp0"
 
-python "170731 Structures Benchmark.py" --batch_size 1 --patch_height 512 --patch_width 512
+python "170731 Structures Benchmark.py"
 
 pause
 

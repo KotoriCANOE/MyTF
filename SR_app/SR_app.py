@@ -236,7 +236,7 @@ def main(argv=None):
     extensions = ['.jpeg', '.jpg', '.png', '.bmp', '.webp', '.tif', '.tiff', '.jp2']
     dst_postfix = FLAGS.dst_postfix + '.png'
     channel_index = -1
-    # nunber of threads
+    # number of threads
     if FLAGS.threads <= 0:
         thread_num = max(1, os.cpu_count() - FLAGS.threads)
     else:

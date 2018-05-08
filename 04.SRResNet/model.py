@@ -127,7 +127,7 @@ class SRmodel(object):
             self.shape_lr = [self.batch_size, self.input_height, self.input_width, self.image_channels]
             self.shape_hr = [self.batch_size, self.output_height, self.output_width, self.image_channels]
     
-    def generator(self, images_lr, is_training=False, reuse=None):
+    def generator(self, images_lr, train=False, reuse=None):
         print('k_first={}, k_last={}, g_depth={}, channels={}, channels2={}'.format(
             self.k_first, self.k_last, self.g_depth, self.channels, self.channels2))
         # parameters
@@ -148,10 +148,9 @@ class SRmodel(object):
             # first conv layer
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
-                last = layers.conv2d(last, ksize=self.k_first, out_channels=channels,
+                last = layers.conv2d(last, self.k_first, channels, use_bias=True,
                     stride=1, padding='SAME', data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=None,
-                    initializer=initializer, init_factor=init_activation,
+                    activation=None, initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             skip1 = last
             # residual blocks
@@ -162,51 +161,49 @@ class SRmodel(object):
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.apply_batch_norm(last, decay=batch_norm,
-                        is_training=is_training, data_format=data_format)
+                        train=train, data_format=data_format)
                     last = layers.apply_activation(last, activation=activation,
                         data_format=data_format, collection=weight_key)
-                    last = layers.conv2d(last, ksize=3, out_channels=channels,
+                    last = layers.conv2d(last, 3, channels, use_bias=False,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation=None,
-                        initializer=initializer, init_factor=init_activation,
+                        activation=None, initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 l += 1
                 with tf.variable_scope('conv{}'.format(l)) as scope:
                     last = layers.apply_batch_norm(last, decay=batch_norm,
-                        is_training=is_training, data_format=data_format)
+                        train=train, data_format=data_format)
                     last = layers.apply_activation(last, activation=activation,
                         data_format=data_format, collection=weight_key)
-                    last = layers.conv2d(last, ksize=3, out_channels=channels,
+                    last = layers.conv2d(last, 3, channels, use_bias=False,
                         stride=1, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation=None,
-                        initializer=initializer, init_factor=init_activation,
+                        activation=None, initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
+                # skip connection - level 2
                 with tf.variable_scope('skip_connection{}'.format(l)) as scope:
                     if self.use_se == 1:
                         last = layers.SqueezeExcitation(last, channel_r=1,
                             data_format=data_format, collection=weight_key)
                     elif self.use_se == 2:
-                        last = layers.SqueezeExcitationLocal(last, channel_r=1, ksize=9,
+                        last = layers.SqueezeExcitationLocal(last, channel_r=1, ksize=16,
                             data_format=data_format, collection=weight_key)
                     last = tf.add(last, skip2)
-            # skip connection
+            # skip connection - level 1
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
                 last = layers.apply_batch_norm(last, decay=batch_norm,
-                    is_training=is_training, data_format=data_format)
+                    train=train, data_format=data_format)
                 last = layers.apply_activation(last, activation=activation,
                     data_format=data_format, collection=weight_key)
-                last = layers.conv2d(last, ksize=3, out_channels=channels,
+                last = layers.conv2d(last, 3, channels, use_bias=True,
                     stride=1, padding='SAME', data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=None,
-                    initializer=initializer, init_factor=init_activation,
+                    activation=None, initializer=initializer, init_factor=init_activation,
                     collection=weight_key)
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
                 if self.use_se == 1:
                     last = layers.SqueezeExcitation(last, channel_r=1,
                         data_format=data_format, collection=weight_key)
                 elif self.use_se == 2:
-                    last = layers.SqueezeExcitationLocal(last, channel_r=1, ksize=9,
+                    last = layers.SqueezeExcitationLocal(last, channel_r=1, ksize=16,
                         data_format=data_format, collection=weight_key)
                 last = tf.add(last, skip1)
                 last = layers.apply_activation(last, activation=activation,
@@ -215,29 +212,26 @@ class SRmodel(object):
             scale_num = 1
             while 1 << scale_num <= self.scaling:
                 with tf.variable_scope('resize_conv{}'.format(scale_num)) as scope:
-                    last = layers.resize_conv2d(last, ksize=3, out_channels=channels2,
+                    last = layers.resize_conv2d(last, 3, channels2, use_bias=True,
                         scaling=self.scaling, padding='SAME', data_format=data_format,
-                        batch_norm=None, is_training=is_training, activation=activation,
-                        initializer=initializer, init_factor=init_activation,
+                        activation=activation, initializer=initializer, init_factor=init_activation,
                         collection=weight_key)
                 scale_num += 1
             # final conv layer
             l += 1
             with tf.variable_scope('conv{}'.format(l)) as scope:
-                last = layers.conv2d(last, ksize=self.k_last, out_channels=self.image_channels,
+                last = layers.conv2d(last, self.k_last, self.image_channels, use_bias=True,
                     stride=1, padding='SAME', data_format=data_format,
-                    batch_norm=None, is_training=is_training, activation=None,
-                    initializer=initializer, init_factor=init_factor,
+                    activation=None, initializer=initializer, init_factor=init_factor,
                     collection=weight_key)
-            # skip connection
+            # skip connection - level 0
             with tf.variable_scope('skip_connection{}'.format(l)) as scope:
                 scale_num = 1
                 while 1 << scale_num <= self.scaling:
                     with tf.variable_scope('resize_conv{}'.format(scale_num)) as scope:
-                        skip0 = layers.resize_conv2d(skip0, ksize=self.k_resize, out_channels=self.image_channels,
+                        skip0 = layers.resize_conv2d(skip0, self.k_resize, self.image_channels, use_bias=True,
                             scaling=self.scaling, padding='SAME', data_format=data_format,
-                            batch_norm=None, is_training=is_training, activation=None,
-                            initializer=initializer, init_factor=init_factor,
+                            activation=None, initializer=initializer, init_factor=init_factor,
                             collection=weight_key)
                     scale_num += 1
                 last = tf.add(last, skip0)
@@ -254,12 +248,14 @@ class SRmodel(object):
                 ref = (ref + 1) * 0.5
                 pred = (pred + 1) * 0.5
             # L2 regularization weight decay
+            '''
             if self.weight_decay > 0:
                 with tf.variable_scope('l2_regularize') as scope:
                     l2_regularize = tf.add_n([tf.nn.l2_loss(v) for v in
                         tf.get_collection(self.generator_weight_key)])
                     l2_regularize = tf.multiply(l2_regularize, self.weight_decay, name='loss')
                     tf.losses.add_loss(l2_regularize, loss_collection=collection)
+            '''
             # L1 loss
             weights1 *= 1 - alpha
             weights2 *= alpha
@@ -278,7 +274,7 @@ class SRmodel(object):
             return tf.add_n(tf.losses.get_losses(loss_collection=collection),
                             name=self.generator_total_loss_key)
     
-    def build_model(self, images_lr=None, is_training=False):
+    def build_model(self, images_lr=None, train=False):
         # set inputs
         if images_lr is None:
             self.images_lr = tf.placeholder(self.dtype, self.shape_lr, name='Input')
@@ -289,7 +285,7 @@ class SRmodel(object):
             self.images_lr = self.images_lr * 2 - 1
         
         # apply generator to inputs
-        self.images_sr = self.generator(self.images_lr, is_training=is_training)
+        self.images_sr = self.generator(self.images_lr, train=train)
         
         # restore [0, 1] range for generated outputs
         if self.output_range == 2:
@@ -305,7 +301,7 @@ class SRmodel(object):
         self.g_rvars = self.g_svars.copy()
         
         # track the moving averages of all trainable variables
-        if not is_training and self.train_moving_average > 0:
+        if not train and self.train_moving_average > 0:
             with tf.variable_scope('train_moving_average') as scope:
                 ema = tf.train.ExponentialMovingAverage(self.train_moving_average)
                 self.g_rvars = {**{ema.average_name(var): var for var in self.g_tvars},
@@ -325,7 +321,7 @@ class SRmodel(object):
             self.images_hr = self.images_hr * 2 - 1
         
         # build generator
-        self.build_model(images_lr, is_training=True)
+        self.build_model(images_lr, train=True)
         
         # build generator losses
         self.g_loss = self.generator_losses(self.images_hr, self.images_sr)
@@ -377,6 +373,16 @@ class SRmodel(object):
         # compute gradients
         with tf.control_dependencies(update_ops):
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, self.g_tvars)
+        
+        # apply weight decay
+        if self.weight_decay > 0:
+            with tf.variable_scope('weight_decay') as scope:
+                weight_decay = g_lr * (self.weight_decay / self.learning_rate)
+                self.g_wvars = tf.get_collection(self.generator_weight_key)
+                for i, (grad, var) in enumerate(g_grads_and_vars):
+                    if var in self.g_wvars:
+                        grad += weight_decay * var
+                        g_grads_and_vars[i] = (grad, var) 
         
         # apply gradients
         g_train_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
