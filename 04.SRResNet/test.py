@@ -24,6 +24,8 @@ tf.app.flags.DEFINE_string('test_dir', './test{postfix}.tmp',
                            """Directory where to write event logs and test results.""")
 tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Test',
                            """Directory where stores the dataset.""")
+tf.app.flags.DEFINE_string('device', '/gpu:0',
+                            """Default device to place the graph.""")
 tf.app.flags.DEFINE_boolean('progress', False,
                             """Whether to test across the entire training procedure.""")
 tf.app.flags.DEFINE_integer('random_seed', 0,
@@ -83,9 +85,14 @@ def get_losses(ref, pred):
     Y_pred = utils.image.RGB2Y(pred, data_format=FLAGS.data_format)
     Y_ss_ssim = utils.image.SS_SSIM(Y_ref, Y_pred, data_format=FLAGS.data_format)
     Y_ms_ssim = utils.image.MS_SSIM2(Y_ref, Y_pred, norm=True, data_format=FLAGS.data_format)
+    Y_ms_ssim_unnorm = utils.image.MS_SSIM2(Y_ref, Y_pred, norm=False, data_format=FLAGS.data_format)
+    
+    # weighted loss
+    alpha = 0.10
+    loss = (1 - alpha) * RGB_mad + alpha * (1 - Y_ms_ssim_unnorm)
     
     # return each loss
-    return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim
+    return RGB_mse, RGB_mad, Y_ss_ssim, Y_ms_ssim, loss
 
 # testing
 def test():
@@ -169,8 +176,9 @@ def test():
             # monitor losses
             for _ in range(len(ret_loss)):
                 sum_loss[_] += cur_loss[_]
-            #print('batch {}, MSE (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-            #       step, *cur_loss))
+            #print('batch {}, MSE (RGB) {}, MAD (RGB) {},'
+            #      'SS-SSIM(Y) {}, MS-SSIM (Y) {}, loss {}'
+            #      .format(step, *cur_loss))
             # images output
             _start = step * FLAGS.batch_size
             _stop = _start + FLAGS.batch_size
@@ -190,8 +198,9 @@ def test():
         print('No.{}'.format(FLAGS.postfix))
         mean_loss = [l / max_steps for l in sum_loss]
         psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-        print('PSNR (RGB) {}, MAD (RGB) {}, SS-SSIM(Y) {}, MS-SSIM (Y) {}'.format(
-               psnr, *mean_loss[1:]))
+        print('PSNR (RGB) {}, MAD (RGB) {},'
+              'SS-SSIM(Y) {}, MS-SSIM (Y) {}, loss {}'
+              .format(psnr, *mean_loss[1:]))
         
         # test progressively saved models
         if FLAGS.progress:
@@ -266,7 +275,9 @@ def main(argv=None):
         eprint('Removed :' + FLAGS.test_dir)
         shutil.rmtree(FLAGS.test_dir)
     os.makedirs(FLAGS.test_dir)
-    test()
+    
+    with tf.device(FLAGS.device):
+        test()
 
 if __name__ == '__main__':
     tf.app.run()

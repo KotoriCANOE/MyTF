@@ -40,6 +40,9 @@ def plot1(postfix, labels=None, name=None):
         
         for _ in range(len(postfix)):
             stats = np.load('test{}.tmp/stats.npy'.format(postfix[_]))
+            if stats.shape[1] <= index:
+                print('test{} doesn\'t have index={}'.format(index))
+                continue
             stats = stats[1:]
             x = stats[:, 0]
             y = stats[:, index]
@@ -58,6 +61,7 @@ def plot1(postfix, labels=None, name=None):
     
     _plot(2, 'MAD (RGB)', yscale='log')
     _plot(4, 'MS-SSIM (Y)', legend=4)
+    _plot(5, 'weighted loss', yscale='log')
 
 #plot1([120, 121, 122, 123], ['model=1 PReLU', 'model=2 PReLU', 'model=2 ReLU', 'model=3 ReLU'], '120')
 #plot1([122, 126, 132], ['(model=2 ReLU lr_min=4e-5)', 'init_activation=2.0', 'init_activation=2.0 lr_min=1e-6'], '122')
@@ -124,5 +128,19 @@ def plot1(postfix, labels=None, name=None):
 #plot1([1061, 1063, 1064, 1065, 1066], [], '1063')
 #plot1([1061, 1064, 1065, 1067, 1068, 1069], [], '1065')
 #plot1([1065, 1067, 1070, 1071], [], '1067')
-plot1([1054, 1055, 1072], [], '1072')
+#plot1([1054, 1055, 1072], [], '1072')
+#plot1([1049, 1061, 1063, 1065, 1067], [], '1067.2')
+#plot1([1049, 1065, 1067, 1073], [], '1073')
+#plot1([1073, 1074, 1075, 1076, 1077, 1078], [], '1074')
+#plot1([1049, 1065, 1073, 1079, 1080], [], '1079')
+#plot1([1049, 1065, 1080, 1081], [], '1081')
+#plot1([1080, 1081, 1082], [], '1082')
+#plot1([1081, 1083, 1084, 1085], [], '1083')
+#plot1([1086, 1087, 1088], [], '1086')
+#plot1([1020, 1054, 1072, 1089], [], '1089')
+#plot1([1090, 1091, 1092, 1093], [], '1090')
+#plot1([1091, 1094, 1095, 1096, 1097], [], '1094')
+#plot1([1091, 1097, 1098, 1099, 1100], [], '1097')
+plot1([1097, 1101, 1102, 1103], [], '1101')
+
 

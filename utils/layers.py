@@ -142,15 +142,20 @@ def dense(last, out_channels, use_bias=None, activation=None,
     return last
 
 def apply_batch_norm(last, decay=0.999, train=False, data_format='NHWC',
-                     collection=None):
+                     renorm=None, collection=None):
+    renorm_decay = 0.99
+    if renorm:
+        if isinstance(renorm, (int, float)):
+            renorm_decay = renorm
+        renorm = True
     if decay:
         return tf.contrib.layers.batch_norm(last, decay=decay, center=True, scale=True,
             fused=True, is_training=train, variables_collections=collection,
-            data_format=data_format, renorm=False, renorm_decay=0.99)
+            data_format=data_format, renorm=renorm, renorm_decay=renorm_decay)
         '''
         return tf.layers.batch_normalization(last, axis=1 if data_format == 'NCHW' else -1,
             momentum=decay, center=True, scale=True, training=train, trainable=True,
-            reuse=None, renorm=False, renorm_momentum=0.99, fused=True)
+            reuse=None, renorm=renorm, renorm_momentum=renorm_decay, fused=True)
         '''
     else:
         return last

@@ -26,6 +26,8 @@ tf.app.flags.DEFINE_string('pretrain_dir', '',
                            """Directory where to load pre-trained model.""")
 tf.app.flags.DEFINE_string('dataset', '../../Dataset.SR/Train',
                            """Directory where stores the dataset.""")
+tf.app.flags.DEFINE_string('device', '/gpu:0',
+                            """Default device to place the graph.""")
 tf.app.flags.DEFINE_boolean('restore', False,
                             """Restore training from checkpoint.""")
 tf.app.flags.DEFINE_integer('save_steps', 5000,
@@ -38,7 +40,7 @@ tf.app.flags.DEFINE_integer('threads', 16,
                             """Number of threads for Dataset process.""")
 tf.app.flags.DEFINE_integer('threads_py', 16,
                             """Number of threads for Dataset process in tf.py_func.""")
-tf.app.flags.DEFINE_integer('num_epochs', 20,
+tf.app.flags.DEFINE_integer('num_epochs', 24,
                             """Number of epochs to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -131,6 +133,10 @@ def train():
     files = files[:epoch_size]
     print('epoch size: {}\n{} steps per epoch\n{} epochs\n{} steps'.format(
         epoch_size, steps_per_epoch, FLAGS.num_epochs, max_steps))
+    
+    # weight decay normalization factor
+    # arXiv 1711.05101
+    #FLAGS.weigth_decay *= np.sqrt(FLAGS.batch_size / max_steps)
     
     # validation set
     if FLAGS.lr_decay_steps < 0 and FLAGS.lr_decay_factor != 0:
@@ -303,7 +309,9 @@ def main(argv=None):
             eprint('Removed :' + FLAGS.train_dir)
             shutil.rmtree(FLAGS.train_dir)
         os.makedirs(FLAGS.train_dir)
-    train()
+    
+    with tf.device(FLAGS.device):
+        train()
 
 if __name__ == '__main__':
     tf.app.run()
