@@ -19,6 +19,9 @@ Thumbs.db
 
 # Dataset
 *.npy*
+*.json
+*.csv
+*.db
 
 # Temporary files
 *.tmp
