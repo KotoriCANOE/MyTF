@@ -1,0 +1,601 @@
+Structures
+
+# 0
+512 + 24704 + 49280 + 98560 + 196864 + 393728 + 786944 + 49164 = 1599756
+
+# 1~10
+@ 1x7/s2x16 conv -> 1x3/s2 max pool -> rb(1x3/s2x32 conv -> 1x3x32 conv) -> rb(1x3/s2x64 conv -> 1x3x64 conv) -> rb(1x3/s2x128 conv -> 1x3x128 conv) -> rb(1x3/s2x256 conv -> 1x3x256 conv) -> rb(1x3/s2x512 conv -> 1x3x512 conv) -> x12 fc
+* 1x1x2048 => 16x1x1024 => 16x1x512 => rb(32x1x256) => rb(64x1x128) => rb(128x1x64) => rb(256x1x32) => rb(512x1x16) => 8192 => 12
+
+#
+@ 1x7/s2x32 conv -> 1x3/s2 max pool -> rb(1x3/s2x32 conv -> 1x3x32 conv) -> rb(1x3/s2x64 conv -> 1x3x64 conv) -> rb(1x3/s2x64 conv -> 1x3x64 conv) -> rb(1x3/s2x128 conv -> 1x3x128 conv) -> rb(1x3/s2x128 conv -> 1x3x128 conv) -> rb(1x3/s2x256 conv -> 1x3x256 conv) -> 1024x12 fc
+* 1x1x2048 => 32x1x1024 => 32x1x512 => rb(32x1x256) => rb(64x1x128) => rb(64x1x64) => rb(128x1x32) => rb(128x1x16) => rb(256x1x8) => rb(256x1x4) => 1024 => 12
+
+# 11~29
+@ 1x7/s2x64 conv -> 1x3/s2 max pool -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> rb(1x1x512 conv -> 1x3/s2x512 conv -> 1x1x1024 conv) -> rb(1x1x512 conv -> 1x3/s2x512 conv -> 1x1x1024 conv) -> 2048x12 fc
+* 1x1x2048 => 64x1x1024 => 64x1x512 => rb(128x1x256) => rb(128x1x128) => rb(256x1x64) => rb(256x1x32) => rb(512x1x16) => rb(512x1x8) => rb(1024x1x4) => rb(1024x1x2) => 2048 => 12
+
+# 30
+@ 1x7/s2x64 conv -> 1x3/s2 max pool -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> 512x12 fc
+* 1x1x2048 => 64x1x1024 => 64x1x512 => rb(128x1x256) => rb(128x1x128) => rb(128x1x64) => rb(256x1x32) => rb(256x1x16) => rb(256x1x8) => rb(512x1x4) => rb(512x1x2) => rb(512x1x1) => 512 => 12
+
+# 31.1
+@ 1x7/s2x64 conv -> 1x3/s2 max pool -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s1x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s1x64 conv -> 1x1x128 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s1x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s1x128 conv -> 1x1x256 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> rb(1x1x256 conv -> 1x3/s1x256 conv -> 1x1x512 conv) -> rb(1x1x256 conv -> 1x3/s2x256 conv -> 1x1x512 conv) -> rb(1x1x256 conv -> 1x3/s1x256 conv -> 1x1x512 conv) -> 4096x12 fc
+* 1x1x2048 => 64x1x1024 => 64x1x512 => rb(128x1x256) => rb(128x1x256) => rb(128x1x128) => rb(128x1x128) => rb(256x1x64) => rb(256x1x64) => rb(256x1x32) => rb(256x1x32) => rb(512x1x16) => rb(512x1x16) => rb(512x1x8) => rb(512x1x8) => 4096 => 12
+
+# 31.2
+@ 1x7/s2x32 conv -> 1x3/s2 max pool -> rb(1x1x32 conv -> 1x3/s2x32 conv -> 1x1x64 conv) -> rb(1x1x32 conv -> 1x3/s1x32 conv -> 1x1x64 conv) -> rb(1x1x32 conv -> 1x3/s2x32 conv -> 1x1x64 conv) -> rb(1x1x32 conv -> 1x3/s1x32 conv -> 1x1x64 conv) -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s1x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s2x64 conv -> 1x1x128 conv) -> rb(1x1x64 conv -> 1x3/s1x64 conv -> 1x1x128 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s1x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s2x128 conv -> 1x1x256 conv) -> rb(1x1x128 conv -> 1x3/s1x128 conv -> 1x1x256 conv) -> 2048x12 fc
+* 1x1x2048 => 32x1x1024 => 32x1x512 => rb(64x1x256) => rb(64x1x256) => rb(64x1x128) => rb(64x1x128) => rb(128x1x64) => rb(128x1x64) => rb(128x1x32) => rb(128x1x32) => rb(256x1x16) => rb(256x1x16) => rb(256x1x8) => rb(256x1x8) => 2048 => 120
+
+# 33
+@ 1x7/s2x48 conv -> 1x3/s2 max pool -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s1x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s1x48 conv -> 1x1x96 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s1x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s1x96 conv -> 1x1x192 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s1x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s1x192 conv -> 1x1x384 conv) -> 3072x12 fc
+* 1x1x2048 => 48x1x1024 => 48x1x512 => rb(96x1x256) => rb(96x1x256) => rb(96x1x128) => rb(96x1x128) => rb(192x1x64) => rb(192x1x64) => rb(192x1x32) => rb(192x1x32) => rb(384x1x16) => rb(384x1x16) => rb(384x1x8) => rb(384x1x8) => 3072 => 12
+
+# 48
+1x7/s1x48 conv -> 1x3/s2 max pool -> rb(1x1x16 conv -> 1x3/s2x16 conv -> 1x1x48 conv) -> rb(1x1x16 conv -> 1x3/s1x16 conv -> 1x1x48 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s1x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s1x48 conv -> 1x1x96 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s1x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s1x96 conv -> 1x1x192 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s1x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s1x192 conv -> 1x1x384 conv) -> 3072x12 fc
+* 1x1x2048 => 48x1x2048 => 48x1x1024 => rb(48x1x512) => rb(48x1x512) => rb(96x1x256) => rb(96x1x256) => rb(96x1x128) => rb(96x1x128) => rb(192x1x64) => rb(192x1x64) => rb(192x1x32) => rb(192x1x32) => rb(384x1x16) => rb(384x1x16) => rb(384x1x8) => rb(384x1x8) => 3072 => 12
+
+# 49
+1x7/s1x48 conv -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> 3072x12 fc (with ReLU)
+* 1x1x2048 => 48x1x2048 => 96x1x1024 => 96x1x512 => 96x1x256 => 192x1x128 => 192x1x64 => 192x1x32 => 384x1x16 => 384x1x8 => 3072 => 12
+384 + (2352 + 6960 + 4704) + (4656 + 6960 + 4704) * 2 + (9312 + 27744 + 18624) + (18528 + 27744 + 18624) * 2 + (37056 + 110784 + 74112) + (73920 + 110784 + 74112) + 36876 = 750156
+
+# 53
+1x7/s1x48 conv -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x48 conv -> 1x3/s2x48 conv -> 1x1x96 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x96 conv -> 1x3/s2x96 conv -> 1x1x192 conv) -> rb(1x1x192 conv -> 1x3/s2x192 conv -> 1x1x384 conv) -> 6144x12 fc (without ReLU)
+* 1x1x2048 => 48x1x2048 => 96x1x1024 => 96x1x512 => 96x1x256 => 192x1x128 => 192x1x64 => 192x1x32 => 384x1x16 => 6144 => 12
+
+
+4 Metabolites
+'creatine', 'gaba', 'glutamate', 'glutamine'
+
+12 Metabolites
+'choline-truncated', 'creatine', 'gaba', 'glutamate',
+'glutamine', 'glycine', 'lactate', 'myo-inositol',
+'NAAG-truncated', 'n-acetylaspartate', 'phosphocreatine', 'taurine'
+
+16 Metabolites
+'acetate', 'aspartate', 'choline-truncated', 'creatine',
+'gaba', 'glutamate', 'glutamine', 'histamine',
+'histidine', 'lactate', 'myo-inositol', 'n-acetylaspartate',
+'scyllo-inositol', 'succinate', 'taurine', 'valine'
+
+
+
+###
+
+# 2
+epoch=5, samples=100000
+won't randomly set scale=0 for train/test set
+
+4 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.00048354057820979506, MAD 0.015309827029705047, MSE accuracy 0.8783, MAD accuracy 0.7766, FP rate 0.21455, FN rate 0.0009
+
+16 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.0008137546841986477, MAD 0.021155770272016525, MSE accuracy 0.7481, MAD accuracy 0.495, FP rate 0.250325, FN rate 0.16221875
+
+# 3
+epoch=40, samples=100000
+MAD loss
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 5.661002886190545e-05, MAD 0.004926405970752239, MSE accuracy 0.9996, MAD accuracy 0.9994, FP rate 0.012791666666666666, FN rate 0.013008333333333332
+
+# 4
+epoch=40, samples=100000
+MSE loss
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 6.48944618384121e-05, MAD 0.005581631717085839, MSE accuracy 0.9993, MAD accuracy 0.9989, FP rate 0.015274999999999999, FN rate 0.014391666666666665
+
+###
+samples=100000
+learning_rate=1e-4
+changed structure
+changed pre-process: smoothing=0.25, noise_scale=0.05, noise_corr=0.5, noise_base=0.1
+
+# 11
+epoch=40, batch_size=16
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 1.4728879516124724, MAD 0.2961635206699371, MSE accuracy 0.0108, MAD accuracy 0.0094, FP rate 0.23479166666666665, FN rate 0.33560833333333334
+
+# 12
+epoch=57, batch_size=32
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.012404894251190126, MAD 0.050923678082227704, MSE accuracy 0.3548, MAD accuracy 0.2693, FP rate 0.28231666666666666, FN rate 0.25728333333333336
+
+# 13
+epoch=80, batch_size=64
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.012363379576988518, MAD 0.05084697646200657, MSE accuracy 0.351, MAD accuracy 0.2687, FP rate 0.26250833333333334, FN rate 0.27731666666666666
+
+###
+batch_size=64
+
+# 14
+epoch=10
+learning_rate=1e-4
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.02397505856975913, MAD 0.08332633435726165, MSE accuracy 0.0222, MAD accuracy 0.0077, FP rate 0.3672166666666667, FN rate 0.39763333333333334
+
+# 15
+epoch=10
+learning_rate=2e-4
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.024680202525854112, MAD 0.09206955655813218, MSE accuracy 0.0047, MAD accuracy 0.0007, FP rate 0.4811666666666667, FN rate 0.30838333333333334
+
+# 16
+epoch=10
+learning_rate=5e-4
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.024536420332640408, MAD 0.09140676255822182, MSE accuracy 0.0047, MAD accuracy 0.0009, FP rate 0.28785, FN rate 0.5047416666666666
+
+# 17
+epoch=10
+learning_rate=1e-3
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.025628723319619896, MAD 0.0922257846236229, MSE accuracy 0.0063, MAD accuracy 0.0016, FP rate 0.4177666666666667, FN rate 0.37375833333333336
+
+###
+learning_rate=1e-4
+
+# 14
+epoch=10
+weight_decay=1e-5
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.02397505856975913, MAD 0.08332633435726165, MSE accuracy 0.0222, MAD accuracy 0.0077, FP rate 0.3672166666666667, FN rate 0.39763333333333334
+
+# 18
+epoch=10
+weight_decay=2e-5
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.03396338199079037, MAD 0.10244682955741882, MSE accuracy 0.0021, MAD accuracy 0.0006, FP rate 0.3545416666666667, FN rate 0.44098333333333334
+
+# 19
+epoch=10
+weight_decay=3e-5
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 1.5636821707010269, MAD 0.3272906768083572, MSE accuracy 0.0007, MAD accuracy 0.0001, FP rate 0.33765, FN rate 0.4519666666666667
+
+# 20
+epoch=10
+weight_decay=4e-5
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.025673398639261723, MAD 0.08855220761299133, MSE accuracy 0.0068, MAD accuracy 0.0013, FP rate 0.37693333333333334, FN rate 0.4095166666666667
+
+# 21
+epoch=10
+weight_decay=5e-5
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 1.5142686389923097, MAD 0.3363419037103653, MSE accuracy 0.0001, MAD accuracy 0.0, FP rate 0.52775, FN rate 0.30224999999999996
+
+# 22
+epoch=10
+weight_decay=7e-5
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 1.4857476276636123, MAD 0.33532541003227234, MSE accuracy 0.0002, MAD accuracy 0.0, FP rate 0.26274166666666665, FN rate 0.5713416666666666
+
+# 23
+epoch=10
+weight_decay=1e-4
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.025392391146719456, MAD 0.09105236776471139, MSE accuracy 0.0052, MAD accuracy 0.0005, FP rate 0.47290000000000004, FN rate 0.3347583333333333
+
+# 24
+epoch=10
+weight_decay=7e-6
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.024550308165699242, MAD 0.08540820821523666, MSE accuracy 0.0104, MAD accuracy 0.0031, FP rate 0.39935000000000004, FN rate 0.37427499999999997
+
+# 25
+epoch=10
+weight_decay=5e-6
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.024876758755743505, MAD 0.08714334048032761, MSE accuracy 0.0106, MAD accuracy 0.0026, FP rate 0.47094166666666665, FN rate 0.3047666666666667
+
+# 26
+epoch=10
+weight_decay=4e-6
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.028403464283049108, MAD 0.09383236991167068, MSE accuracy 0.0054, MAD accuracy 0.0012, FP rate 0.304075, FN rate 0.48175833333333334
+
+# 27
+epoch=10
+weight_decay=3e-6
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.02330835899710655, MAD 0.08778074057102203, MSE accuracy 0.0082, MAD accuracy 0.0015, FP rate 0.3680583333333333, FN rate 0.42460000000000003
+
+# 28
+epoch=10
+weight_decay=2e-6
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 1.5159405797719956, MAD 0.3337070028781891, MSE accuracy 0.0002, MAD accuracy 0.0, FP rate 0.4841166666666667, FN rate 0.3213833333333333
+
+# 29
+epoch=10
+weight_decay=1e-6
+
+12 Metabolites
+MSE threshold 0.001
+MAD threshold 0.02
+Totally 10000 Samples, MSE 0.024196970119327307, MAD 0.08781925010085107, MSE accuracy 0.0117, MAD accuracy 0.0027, FP rate 0.39461666666666667, FN rate 0.40815833333333335
+
+###
+12 Metabolites
+MSE threshold 0.005
+MAD threshold 0.05
+epoch=80, batch_size=64
+learning_rate=1e-4
+weight_decay=1e-5
+
+# 13
+double channels every 2 res blocks, reduce size every 1 res blocks, totally 8 res blocks
+
+Totally 10000 Samples, MSE 0.012363379583507776, MAD 0.05084697655439377, MSE accuracy 0.6804, MAD accuracy 0.6763, FP rate 0.12730833333333333, FN rate 0.13578333333333334
+
+# 30
+double channels every 3 res blocks, reduce size every 1 res blocks, totally 9 res blocks
+
+Totally 10000 Samples, MSE 0.015131665827706456, MAD 0.05778676050901413, MSE accuracy 0.6335, MAD accuracy 0.6229, FP rate 0.12856666666666666, FN rate 0.17754999999999999
+
+###
+epoch=60, batch_size=32
+double channels every 4 res blocks, reduce size every 2 res blocks, totally 12 res blocks
+
+# 31
+channels=64
+
+Totally 10000 Samples, MSE 0.01175643981937319, MAD 0.047383436062932015, MSE accuracy 0.6954, MAD accuracy 0.6987, FP rate 0.12599166666666667, FN rate 0.11319166666666668
+
+# 32
+channels=56
+
+Totally 10000 Samples, MSE 0.012423333098739386, MAD 0.04942029965221882, MSE accuracy 0.6838, MAD accuracy 0.6825, FP rate 0.12305833333333333, FN rate 0.12854166666666667
+
+# 33
+channels=48
+
+Totally 10000 Samples, MSE 0.01458917035870254, MAD 0.052379090547561645, MSE accuracy 0.6688, MAD accuracy 0.6672, FP rate 0.13617500000000002, FN rate 0.13074166666666667
+
+# 34
+channels=40
+
+Totally 10000 Samples, MSE 4.599887886238098, MAD 0.7913935266971588, MSE accuracy 0.0003, MAD accuracy 0.0003, FP rate 0.09164166666666666, FN rate 0.33713333333333334
+
+###
+epoch=60, batch_size=32
+double channels every 4 res blocks, reduce size every 2 res blocks, totally 12 res blocks
+channels=48
+
+# 33
+epoch=60, batch_size=32
+
+Totally 10000 Samples, MSE 0.01458917035870254, MAD 0.052379090547561645, MSE accuracy 0.6688, MAD accuracy 0.6672, FP rate 0.13617500000000002, FN rate 0.13074166666666667
+
+# 35
+epoch=60, batch_size=64
+
+Totally 10000 Samples, MSE 0.013313215969875456, MAD 0.05282196930348873, MSE accuracy 0.6652, MAD accuracy 0.6586, FP rate 0.14369166666666666, FN rate 0.12895
+
+# 36
+batch_norm=0.999
+
+Totally 10000 Samples, MSE 0.01982483134046197, MAD 0.08250730145573616, MSE accuracy 0.23, MAD accuracy 0.1821, FP rate 0.08033333333333333, FN rate 0.42065833333333336
+
+###
+epoch=10, batch_size=32
+double channels every 4 res blocks, reduce size every 2 res blocks, totally 12 res blocks
+channels=48
+
+# 37
+initializer=1
+
+Totally 10000 Samples, MSE 0.02042107989117503, MAD 0.07365266886353493, MSE accuracy 0.4667, MAD accuracy 0.4187, FP rate 0.182675, FN rate 0.24802500000000002
+
+# 38
+initializer=2
+
+Totally 10000 Samples, MSE 0.024114722015708686, MAD 0.08100967398285866, MSE accuracy 0.352, MAD accuracy 0.3094, FP rate 0.2814666666666667, FN rate 0.19376666666666667
+
+# 39
+initializer=3
+
+Totally 10000 Samples, MSE 1.529997008228302, MAD 0.3152618325471878, MSE accuracy 0.0284, MAD accuracy 0.0321, FP rate 0.18710833333333332, FN rate 0.275775
+
+# 40
+initializer=4
+
+Totally 10000 Samples, MSE 0.019627514466643334, MAD 0.0781250039577484, MSE accuracy 0.3638, MAD accuracy 0.308, FP rate 0.15039166666666667, FN rate 0.32283333333333336
+
+# 41
+initializer=5
+
+Totally 10000 Samples, MSE 0.02320374490208924, MAD 0.076745079100132, MSE accuracy 0.4436, MAD accuracy 0.3831, FP rate 0.161225, FN rate 0.292475
+
+###
+epoch=60, batch_size=32
+double channels every 4 res blocks, reduce size every 2 res blocks, totally 12 res blocks
+channels=48
+initializer=1
+
+# 42
+activation=prelu
+
+Totally 10000 Samples, MSE 0.013191477617248893, MAD 0.05099099485874176, MSE accuracy 0.677, MAD accuracy 0.674, FP rate 0.137775, FN rate 0.122525
+
+# 43
+activation=relu
+
+Totally 10000 Samples, MSE 1.4723715078353883, MAD 0.29579765758514404, MSE accuracy 0.045, MAD accuracy 0.068, FP rate 0.14243333333333333, FN rate 0.18734166666666666
+
+# 47
+activation=relu
+
+Totally 10000 Samples, MSE 0.01287153484635055, MAD 0.05099026797413826, MSE accuracy 0.6769, MAD accuracy 0.6753, FP rate 0.13421666666666668, FN rate 0.128975
+
+###
+epoch=10, batch_size=32
+activation=relu
+
+# 44
+initializer=1
+
+Totally 10000 Samples, MSE 0.022703006387501955, MAD 0.07892687636613846, MSE accuracy 0.4012, MAD accuracy 0.3485, FP rate 0.24644999999999997, FN rate 0.21386666666666665
+Totally 10000 Samples, MSE 0.022936589162051678, MAD 0.07777919892072678, MSE accuracy 0.4296, MAD accuracy 0.3631, FP rate 0.18763333333333332, FN rate 0.27905833333333335
+Totally 10000 Samples, MSE 0.02011150204092264, MAD 0.0750608738064766, MSE accuracy 0.4412, MAD accuracy 0.387, FP rate 0.21950833333333333, FN rate 0.226625
+Totally 10000 Samples, MSE 3.1111727424621582, MAD 0.5640425404548645, MSE accuracy 0.0014, MAD accuracy 0.002, FP rate 0.16440833333333335, FN rate 0.31350833333333333
+Totally 10000 Samples, MSE 1.5633091865301132, MAD 0.33052864966392514, MSE accuracy 0.0197, MAD accuracy 0.0175, FP rate 0.33276666666666666, FN rate 0.219275
+
+# 45
+initializer=2
+
+Totally 10000 Samples, MSE 0.02242875982299447, MAD 0.07812490171194077, MSE accuracy 0.3942, MAD accuracy 0.3452, FP rate 0.17866666666666667, FN rate 0.27781666666666666
+Totally 10000 Samples, MSE 0.02069666856043041, MAD 0.0723252966761589, MSE accuracy 0.4951, MAD accuracy 0.4406, FP rate 0.2584666666666667, FN rate 0.16586666666666666
+Totally 10000 Samples, MSE 0.02229102208390832, MAD 0.08059188312888145, MSE accuracy 0.3722, MAD accuracy 0.3028, FP rate 0.12061666666666666, FN rate 0.3706666666666667
+Totally 10000 Samples, MSE 0.018480501145496965, MAD 0.06696687077879905, MSE accuracy 0.5515, MAD accuracy 0.5153, FP rate 0.17116666666666666, FN rate 0.20966666666666667
+Totally 10000 Samples, MSE 0.021026586501300334, MAD 0.08136588353514672, MSE accuracy 0.3532, MAD accuracy 0.2825, FP rate 0.14586666666666667, FN rate 0.3507
+
+# 46
+initializer=5
+
+Totally 10000 Samples, MSE 0.02154638633430004, MAD 0.07738831408619881, MSE accuracy 0.4153, MAD accuracy 0.3666, FP rate 0.2572583333333333, FN rate 0.19844166666666666
+Totally 10000 Samples, MSE 1.533731614780426, MAD 0.3186584495782852, MSE accuracy 0.0251, MAD accuracy 0.0271, FP rate 0.18790833333333334, FN rate 0.286925
+Totally 10000 Samples, MSE 0.020381887870281935, MAD 0.074637323230505, MSE accuracy 0.4716, MAD accuracy 0.4051, FP rate 0.18708333333333335, FN rate 0.2617
+Totally 10000 Samples, MSE 0.02398389829173684, MAD 0.0853909412741661, MSE accuracy 0.3323, MAD accuracy 0.2373, FP rate 0.1895416666666667, FN rate 0.34391666666666665
+Totally 10000 Samples, MSE 0.01910852902084589, MAD 0.06684845976829529, MSE accuracy 0.5625, MAD accuracy 0.5244, FP rate 0.18785833333333335, FN rate 0.19188333333333332
+
+###
+epoch=60, batch_size=32
+double channels every 4 res blocks, reduce size every 2 res blocks, totally 12 res blocks
+channels=48
+initializer=2
+activation=relu
+
+# 48
+no strides in the first layer
+strides doubling: 1st every 2 res blocks
+channels doubling: 3rd every 4 res blocks
+res_blocks=14
+
+Totally 10000 Samples, MSE 0.013142947051860391, MAD 0.0509076703876257, MSE accuracy 0.6777, MAD accuracy 0.6755, FP rate 0.13483333333333333, FN rate 0.12590833333333332
+
+###
+epoch=60, batch_size=32
+no strides in the first layer
+no max pooling after first layer
+strides doubling: 1st every 1 res blocks
+channels doubling: 1st every 3 res blocks
+channels=48
+initializer=2
+activation=relu
+
+test set 1: without zeros
+test set 2: partially zeros with uniform random number of zeros
+
+# 49
+res_blocks=8
+
+Totally 10000 Samples, MSE 0.01440698845498264, MAD 0.05024472726583481, MSE accuracy 0.6789, MAD accuracy 0.6807, FP rate 0.11949166666666666, FN rate 0.1311
+Totally 10000 Samples, MSE 0.011445672393590211, MAD 0.0481286926060915, MSE accuracy 0.7031, MAD accuracy 0.6928, FP rate 0.179275, FN rate 0.09536666666666667
+
+# 50
+res_blocks=9
+
+Totally 10000 Samples, MSE 0.0141368233891204, MAD 0.051457609871029854, MSE accuracy 0.6725, MAD accuracy 0.6699, FP rate 0.13505833333333334, FN rate 0.12459166666666667
+Totally 10000 Samples, MSE 0.011810040621645748, MAD 0.05106785391569137, MSE accuracy 0.6803, MAD accuracy 0.6566, FP rate 0.2029, FN rate 0.09413333333333333
+
+# 51
+res_blocks=10
+
+Totally 10000 Samples, MSE 0.013614066630788147, MAD 0.05233609243631363, MSE accuracy 0.6681, MAD accuracy 0.6652, FP rate 0.144425, FN rate 0.12365833333333333
+Totally 10000 Samples, MSE 0.01112323042191565, MAD 0.052732577151060105, MSE accuracy 0.6687, MAD accuracy 0.5986, FP rate 0.23815833333333333, FN rate 0.09094999999999999
+
+# 52
+fine-tune #49 with train set 2
+Totally 10000 Samples, MSE 0.014567721810936927, MAD 0.051202294132113454, MSE accuracy 0.674, MAD accuracy 0.6732, FP rate 0.11860833333333333, FN rate 0.13750833333333332
+Totally 10000 Samples, MSE 0.008447630581306294, MAD 0.028317377445846795, MSE accuracy 0.8139, MAD accuracy 0.8469, FP rate 0.064925, FN rate 0.07761666666666667
+
+###
+samples=1000000
+epoch=8, batch_size=64
+remove ReLU in last layer
+
+# 53
+res_blocks=7
+
+Totally 10000 Samples, MSE 0.015987061067670585, MAD 0.05210432578623295, MSE accuracy 0.6732, MAD accuracy 0.6728, FP rate 0.1434, FN rate 0.11554166666666667
+Totally 10000 Samples, MSE 0.012093769674003125, MAD 0.047728846347332, MSE accuracy 0.7259, MAD accuracy 0.7107, FP rate 0.1583, FN rate 0.09269166666666667
+
+# 54
+res_blocks=8
+
+Totally 10000 Samples, MSE 0.01422213433869183, MAD 0.04953347809612751, MSE accuracy 0.6859, MAD accuracy 0.6867, FP rate 0.11636666666666667, FN rate 0.12780833333333333
+Totally 10000 Samples, MSE 0.011797756352089345, MAD 0.049439116722345355, MSE accuracy 0.7088, MAD accuracy 0.6836, FP rate 0.16710833333333333, FN rate 0.10623333333333333
+
+# 55
+res_blocks=9
+
+Totally 10000 Samples, MSE 0.014637977509759367, MAD 0.05226880375742912, MSE accuracy 0.6718, MAD accuracy 0.6674, FP rate 0.12910833333333332, FN rate 0.13398333333333332
+Totally 10000 Samples, MSE 0.012647065199911595, MAD 0.054409806898236275, MSE accuracy 0.6634, MAD accuracy 0.6263, FP rate 0.204425, FN rate 0.10965000000000001
+
+# 56
+res_blocks=8
+batch_norm=0.999
+
+Totally 10000 Samples, MSE 0.014528053931891919, MAD 0.05999795452952385, MSE accuracy 0.5902, MAD accuracy 0.5752, FP rate 0.10490833333333333, FN rate 0.238475
+Totally 10000 Samples, MSE 0.03795555644482374, MAD 0.11576097087860107, MSE accuracy 0.3096, MAD accuracy 0.2803, FP rate 0.3597916666666667, FN rate 0.20623333333333335
+
+# 57
+res_blocks=8
+k_first=3
+
+Totally 10000 Samples, MSE 0.014585911765135825, MAD 0.0509037085801363, MSE accuracy 0.6791, MAD accuracy 0.6779, FP rate 0.12459166666666667, FN rate 0.12962500000000002
+Totally 10000 Samples, MSE 0.012141476172208785, MAD 0.05139260146319866, MSE accuracy 0.6921, MAD accuracy 0.6638, FP rate 0.18664166666666668, FN rate 0.102225
+
+# 60
+smoothing=0
+
+test with smoothing=0
+Totally 10000 Samples, MSE 0.009258716918807476, MAD 0.037719187808036805, MSE accuracy 0.7703, MAD accuracy 0.786, FP rate 0.08846666666666668, FN rate 0.084075
+Totally 10000 Samples, MSE 0.006663454400748015, MAD 0.03730787251591682, MSE accuracy 0.8038, MAD accuracy 0.8059, FP rate 0.13699166666666665, FN rate 0.060741666666666666
+
+test normally
+Totally 10000 Samples, MSE 5.290198776626587, MAD 1.4105395956039428, MSE accuracy 0.0602, MAD accuracy 0.061, FP rate 0.15623333333333334, FN rate 0.7292583333333332
+Totally 10000 Samples, MSE 3.054256685447693, MAD 0.8585600303173065, MSE accuracy 0.1093, MAD accuracy 0.113, FP rate 0.25614166666666666, FN rate 0.4404416666666667
+
+# 61
+noise_scale=0
+
+Totally 10000 Samples, MSE 0.005010306570446119, MAD 0.013476753599196672, MSE accuracy 0.9863, MAD accuracy 0.987, FP rate 0.008525, FN rate 0.009816666666666666
+Totally 10000 Samples, MSE 0.00569498667451553, MAD 0.025483590069413184, MSE accuracy 0.876, MAD accuracy 0.8893, FP rate 0.06934166666666666, FN rate 0.03689166666666666
+
+###
+improved smoothing and noise_scale random generator
+smoothing=0.5, noise_scale=0.03
+
+# 62
+trainset: Train1
+epoch=8
+
+Totally 10000 Samples, MSE 0.0028326972232665865, MAD 0.027465686927735804, MSE accuracy 0.8636, MAD accuracy 0.8633, FP rate 0.07103333333333334, FN rate 0.06638333333333334
+Totally 10000 Samples, MSE 0.004193348312843591, MAD 0.03381307454109192, MSE accuracy 0.8279, MAD accuracy 0.8227, FP rate 0.11549166666666666, FN rate 0.068775
+
+# 62
+fine-tune trainset: Train2
+epoch=8~16
+
+Totally 10000 Samples, MSE 0.0027349428120302037, MAD 0.026047732202708722, MSE accuracy 0.8672, MAD accuracy 0.8703, FP rate 0.06330833333333334, FN rate 0.06770833333333333
+Totally 10000 Samples, MSE 0.0014394351234775968, MAD 0.016551157412678003, MSE accuracy 0.9374, MAD accuracy 0.9472, FP rate 0.03531666666666667, FN rate 0.03700833333333333
+
+# 63
+trainset: Train2
+epoch=16
+
+Totally 10000 Samples, MSE 0.002929524023225531, MAD 0.027021549263596536, MSE accuracy 0.8566, MAD accuracy 0.8598, FP rate 0.06816666666666667, FN rate 0.06915833333333334
+Totally 10000 Samples, MSE 0.0015043819502112456, MAD 0.016366148279607296, MSE accuracy 0.9337, MAD accuracy 0.943, FP rate 0.037283333333333335, FN rate 0.03716666666666667
+
+###
+trainset: Train1
+epoch=8
+
+# 64
+initializer=1
+
+Totally 10000 Samples, MSE 0.00287984906937927, MAD 0.027118739584088326, MSE accuracy 0.8599, MAD accuracy 0.8606, FP rate 0.06985, FN rate 0.068775
+Totally 10000 Samples, MSE 0.0034731983978301285, MAD 0.03244010047316551, MSE accuracy 0.8482, MAD accuracy 0.8434, FP rate 0.10868333333333334, FN rate 0.06463333333333333
+
+# 62
+initializer=2
+
+Totally 10000 Samples, MSE 0.0028326972232665865, MAD 0.027465686927735804, MSE accuracy 0.8636, MAD accuracy 0.8633, FP rate 0.07103333333333334, FN rate 0.06638333333333334
+Totally 10000 Samples, MSE 0.004193348312843591, MAD 0.03381307454109192, MSE accuracy 0.8279, MAD accuracy 0.8227, FP rate 0.11549166666666666, FN rate 0.068775
+
+# 65
+initializer=3
+
+Totally 10000 Samples, MSE 0.002571728455438279, MAD 0.025738200259208678, MSE accuracy 0.8747, MAD accuracy 0.8792, FP rate 0.06665, FN rate 0.060816666666666665
+Totally 10000 Samples, MSE 0.002818821996822953, MAD 0.029907801124453546, MSE accuracy 0.8707, MAD accuracy 0.868, FP rate 0.09299166666666665, FN rate 0.05744166666666667
+
+# 66
+initializer=4
+
+Totally 10000 Samples, MSE 0.0026064272625837474, MAD 0.02641132240444422, MSE accuracy 0.8731, MAD accuracy 0.8753, FP rate 0.06273333333333334, FN rate 0.06731666666666666
+Totally 10000 Samples, MSE 0.003399810142815113, MAD 0.03207876170575619, MSE accuracy 0.8533, MAD accuracy 0.8436, FP rate 0.10865000000000001, FN rate 0.06660833333333334
+
+# 67
+initializer=5
+
+Totally 10000 Samples, MSE 0.002936405036319047, MAD 0.027625295668840408, MSE accuracy 0.8579, MAD accuracy 0.86, FP rate 0.07413333333333333, FN rate 0.06720833333333333
+Totally 10000 Samples, MSE 0.003933022336475551, MAD 0.03411283925175667, MSE accuracy 0.8292, MAD accuracy 0.826, FP rate 0.11503333333333333, FN rate 0.06943333333333333
+
+###
+initializer=3
+
+
+
+1 more fc layer
+

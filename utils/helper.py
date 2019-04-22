@@ -40,7 +40,7 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
     files = []
     for (dir_path, dir_names, file_names) in os.walk(path):
         for f in file_names:
-            if os.path.splitext(f)[1].lower() in filter_ext:
+            if not filter_ext or os.path.splitext(f)[1].lower() in filter_ext:
                 file_path = os.path.join(dir_path, f)
                 try:
                     if encoding: file_path = file_path.encode(encoding)
@@ -83,7 +83,7 @@ def ImageReader(files, channels=0, shuffle=False):
     #image.set_shape([None, None, None if channels <= 0 else channels])
     return image
 
-# writing batch of images within tensorflow graph
+# encode a batch of images to a list of pngs
 def BatchPNG(images, batch_size, dtype=tf.uint8):
     pngs = []
     for i in range(batch_size):

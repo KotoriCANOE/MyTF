@@ -41,7 +41,7 @@ def plot1(postfix, labels=None, name=None):
         for _ in range(len(postfix)):
             stats = np.load('test{}.tmp/stats.npy'.format(postfix[_]))
             if stats.shape[1] <= index:
-                print('test{} doesn\'t have index={}'.format(index))
+                print('test{} doesn\'t have index={}'.format(postfix[_], index))
                 continue
             stats = stats[1:]
             x = stats[:, 0]
@@ -141,6 +141,6 @@ def plot1(postfix, labels=None, name=None):
 #plot1([1090, 1091, 1092, 1093], [], '1090')
 #plot1([1091, 1094, 1095, 1096, 1097], [], '1094')
 #plot1([1091, 1097, 1098, 1099, 1100], [], '1097')
-plot1([1097, 1101, 1102, 1103], [], '1101')
+plot1([1097, 1101, 1102, 1103, 1104, 1105], [], '1101')
 
 

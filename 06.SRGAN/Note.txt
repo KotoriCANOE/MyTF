@@ -1,0 +1,48 @@
+No	tesPSNR	testMAD	SS-SSIM	MS-SSIM	steps	Others
+
+input_range=2, output_range=2
+d_channels=64, ad_loss=1e-2
+g_lr=1e-3, d_lr=1e-3
+epoch=10, lr_decay_steps=100
+1											d_channels=48, ad_loss=1e-1
+2	27.688	.022864	.904152	.922402	7738	
+d_lr=1e-4, random shuffle input files
+3	27.168	.024529	.895001	.914741	26603	
+d_batch_norm=0
+g_lr=1e-4, lr_decay_steps=400
+4	28.047	.021921	.905937	.923054	54390	
+
+input_range=2, output_range=2
+epoch=10, lr_decay_steps=400
+g_loss(alpha=0.0): no MS-SSIM loss
+5	27.630	.022598	.883724	.906285	79650
+6	27.383	.023544	.874824	.899508	79650	learning_beta1=0.5, learning_beta2=0.9
+
+WGAN-GP * 1e-3
+critic_iters=5
+weight_decay=2e-6
+d_weight_decay=1e-6
+lr_decay_factor=0.99
+lr_decay_steps=500
+11	28.467	.020190	.903877	.920472	56079	learning_beta1=0.9, learning_beta2=0.999
+11	28.448	.020031	.906441	.922938	75960	learning_beta1=0.9, learning_beta2=0.999
+
+epoch=6
+lr_decay_steps=100
+12			critic_iters=5, gan_loss=2
+13			critic_iters=5, gan_loss=3
+14			critic_iters=5, gan_loss=4
+14			critic_iters=5, gan_loss=5
+
+gan_loss=2
+learning_beta1=0.5, learning_beta2=0.9
+16	28.417	.020040	.905973	.922961	41020		critic_iters=5
+17			critic_iters=2
+
+use residual blocks in critic networks
+gan_loss=2, critic_iters=5
+lr_decay_steps=200
+20	28.366	.020183	.905171	.922156	43511
+21	28.348	.020231	.904491	.921867	26879
+
+

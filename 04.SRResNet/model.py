@@ -375,29 +375,10 @@ class SRmodel(object):
         # compute gradients
         with tf.control_dependencies(update_ops):
             g_grads_and_vars = g_opt.compute_gradients(self.g_loss, self.g_tvars)
-        '''
-        # weight decay (prior to apply gradients)
-        if self.weight_decay > 0:
-            with tf.variable_scope('weight_decay') as scope:
-                weight_decay = g_lr * (self.weight_decay / self.learning_rate)
-                self.g_wvars = tf.get_collection(self.generator_weight_key)
-                for i, (grad, var) in enumerate(g_grads_and_vars):
-                    if var in self.g_wvars:
-                        grad += weight_decay * var
-                        g_grads_and_vars[i] = (grad, var) 
-        '''
+        
         # apply gradients
         g_opt_ops.append(g_opt.apply_gradients(g_grads_and_vars, global_step))
-        '''
-        # weight decay (post to apply gradients)
-        if self.weight_decay > 0:
-            self.g_wvars = tf.get_collection(self.generator_weight_key)
-            with tf.variable_scope('weight_decay') as scope:
-                weight_decay = g_lr * (self.weight_decay / self.learning_rate)
-                with tf.control_dependencies(g_opt_ops):
-                    for var in self.g_wvars:
-                        g_opt_ops.append(tf.assign_sub(var, weight_decay * var, use_locking=True))
-        '''
+        
         # optimization operations
         g_train_ops.extend(g_opt_ops)
         

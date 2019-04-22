@@ -10,15 +10,15 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('src_dir', './',
                            """Directory where the image files are to be processed.""")
-tf.app.flags.DEFINE_string('dst_dir', os.path.join(FLAGS.src_dir, 'split'),
+tf.app.flags.DEFINE_string('dst_dir', '{src_dir}/split',
                            """Directory where to write the processed images.""")
 tf.app.flags.DEFINE_boolean('recursive', True,
                            """Recursively search all the files in 'src_dir'.""")
-tf.app.flags.DEFINE_integer('patch_height', 480,
+tf.app.flags.DEFINE_integer('patch_height', 1024,
                             """Max patch height.""")
-tf.app.flags.DEFINE_integer('patch_width', 480,
+tf.app.flags.DEFINE_integer('patch_width', 1024,
                             """Max patch width.""")
-tf.app.flags.DEFINE_integer('patch_pad', 48,
+tf.app.flags.DEFINE_integer('patch_pad', 0,
                             """Padding around patches.""")
 tf.app.flags.DEFINE_integer('threads', 0,
                             """Concurrent multi-threading Python execution.""")
@@ -76,6 +76,8 @@ def listdir_files(path, recursive=True, filter_ext=None, encoding=None):
 
 # main
 def main(argv=None):
+    FLAGS.dst_dir = FLAGS.dst_dir.format(src_dir=FLAGS.src_dir)
+
     from skimage import io
     from skimage import transform
     

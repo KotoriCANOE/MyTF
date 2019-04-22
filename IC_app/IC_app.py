@@ -7,20 +7,18 @@ import tensorflow as tf
 
 # working directory
 print('Current working directory:\n    {}\n'.format(os.getcwd()))
-MODEL_DIR = os.path.join(os.path.split(os.path.realpath(__file__))[0], 'SR_model')
+MODEL_DIR = os.path.join(os.path.split(os.path.realpath(__file__))[0], 'IC_model')
 
 # flags
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('model_dir', MODEL_DIR,
                            """Directory where the image files are to be processed.""")
-tf.app.flags.DEFINE_integer('scaling', 2,
-                            """Up-scaling factor of the model.""")
 tf.app.flags.DEFINE_string('src_dir', './',
                            """Directory where the image files are to be processed.""")
-tf.app.flags.DEFINE_string('dst_dir', '{src_dir}/SR_results',
+tf.app.flags.DEFINE_string('dst_dir', os.path.join(FLAGS.src_dir, 'IC_results'),
                            """Directory where to write the processed images.""")
-tf.app.flags.DEFINE_string('dst_postfix', '.SR',
+tf.app.flags.DEFINE_string('dst_postfix', '.IC',
                            """Postfix added to the processed filenames.""")
 tf.app.flags.DEFINE_boolean('recursive', True,
                            """Recursively search all the files in 'src_dir'.""")
@@ -32,16 +30,10 @@ tf.app.flags.DEFINE_integer('patch_width', 512,
                             """Max patch width.""")
 tf.app.flags.DEFINE_integer('patch_pad', 8,
                             """Padding around patches.""")
-tf.app.flags.DEFINE_integer('patch_mod', 8,
-                            """Mod of patches.""")
 tf.app.flags.DEFINE_integer('threads', 0,
                             """Concurrent multi-threading Python execution.""")
 tf.app.flags.DEFINE_integer('sess_threads', 1,
                             """Maximum number of concurrent running TensorFlow sessions.""")
-tf.app.flags.DEFINE_float('memory_fraction', 1.0,
-                            """Maximum allowed fraction of memory to allocate.""")
-tf.app.flags.DEFINE_string('device', 'GPU:0',
-                            """Preferred device to use.""")
 
 # stderr print
 def eprint(*args, **kwargs):
@@ -49,18 +41,13 @@ def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 # API
-class SRFilter:
-    def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', scaling=2,
-                 sess_threads=1, memory_fraction=1.0, device='GPU:0'):
+class ICFilter:
+    def __init__(self, model_dir=MODEL_DIR, data_format='NCHW', sess_threads=1):
         # arXiv 1509.09308
         # a new class of fast algorithms for convolutional neural networks using Winograd's minimal filtering algorithms
         os.environ['TF_ENABLE_WINOGRAD_NONFUSED'] = '1'
         
         self.data_format = data_format
-        self.scaling = scaling
-        self.memory_fraction = memory_fraction
-        self.device = '/device:{}'.format(device)
-        
         self._create_graph()
         self._create_session()
         self._restore_graph(model_dir)
@@ -70,48 +57,32 @@ class SRFilter:
         self.graph = tf.Graph()
     
     def _create_session(self):
-        gpu_options = tf.GPUOptions(allow_growth=True,
-            per_process_gpu_memory_fraction=self.memory_fraction)
-        config = tf.ConfigProto(gpu_options=gpu_options,
-            allow_soft_placement=True, log_device_placement=False)
+        gpu_options = tf.GPUOptions(allow_growth=True)
+        config = tf.ConfigProto(gpu_options=gpu_options, log_device_placement=False)
         self.sess = tf.Session(graph=self.graph, config=config)
     
     def _restore_graph(self, model_dir):
+        # force load contrib ops
+        # https://github.com/tensorflow/tensorflow/issues/10130
+        dir(tf.contrib)
         # load meta graph and restore variables
         with self.graph.as_default():
-            with tf.device(self.device):
-                if os.path.isfile(model_dir):
-                    model_pb = model_dir
-                else:
-                    model_pb = os.path.join(model_dir, 'model.pb')
-                    model_meta = os.path.join(model_dir, 'model.meta')
-                if os.path.exists(model_pb):
-                    graph_def = tf.GraphDef()
-                    with open(model_pb, 'rb') as fd:
-                        graph_def.ParseFromString(fd.read())
-                    tf.import_graph_def(graph_def, name="")
-                    eprint('Loaded {}'.format(model_pb))
-                elif os.path.exists(model_meta):
-                    saver = tf.train.import_meta_graph(model_meta, clear_devices=True)
-                    if saver is None:
-                        raise ValueError('Failed to import meta graph!')
-                    saver.restore(self.sess, os.path.join(model_dir, 'model'))
-                    eprint('Loaded {}'.format(model_meta))
-                else:
-                    eprint('No model file is found!')
+            saver = tf.train.import_meta_graph(os.path.join(model_dir, 'model.meta'))
+            if saver is None:
+                raise ValueError('Failed to import meta graph!')
+            saver.restore(self.sess, os.path.join(model_dir, 'model'))
         # access placeholders variables
-        self.input = self.graph.get_tensor_by_name('Input:0')
-        self.output = self.graph.get_tensor_by_name('Output:0')
+        self.src = self.graph.get_tensor_by_name('Source:0')
+        self.enc = self.graph.get_tensor_by_name('Encoded:0')
         self.graph.finalize()
     
-    def inference(self, input):
-        feed_dict = {self.input: input}
+    def inference(self, src):
+        feed_dict = {self.src: src}
         with self.semaphore:
-            output = self.sess.run(self.output, feed_dict)
-        return output
+            enc = self.sess.run(self.enc, feed_dict)
+        return enc
     
-    def process(self, src, max_patch_height=360, max_patch_width=360, patch_pad=8, patch_mod=8,
-        data_format='NHWC', msg=None):
+    def process(self, src, max_patch_height=512, max_patch_width=512, patch_pad=8, data_format='NHWC', msg=None):
         assert isinstance(src, np.ndarray)
         if msg is True: msg = ''
         # shape standardization
@@ -147,18 +118,16 @@ class SRFilter:
         height = shape[2]
         width = shape[3]
         # split into (padded & overlapped) patches
-        def pad_split_patch(dim, max_patch, patch_pad=0, patch_mod=1):
+        def pad_split_patch(dim, max_patch, patch_pad=0):
             split = 1
             patch = (dim + patch_pad * split * 2 + split - 1) // split
-            patch = (patch + patch_mod - 1) // patch_mod * patch_mod
             while patch > max_patch:
                 split += 1
                 patch = (dim + patch_pad * split * 2 + split - 1) // split
-                patch = (patch + patch_mod - 1) // patch_mod * patch_mod
             pad = patch * split - patch_pad * (split - 1) * 2 - dim
             return pad, split, patch
-        pad_h, split_h, patch_h = pad_split_patch(height, max_patch_height, patch_pad, patch_mod)
-        pad_w, split_w, patch_w = pad_split_patch(width, max_patch_width, patch_pad, patch_mod)
+        pad_h, split_h, patch_h = pad_split_patch(height, max_patch_height, patch_pad)
+        pad_w, split_w, patch_w = pad_split_patch(width, max_patch_width, patch_pad)
         # padding
         need_padding = pad_h > 0 or pad_w > 0
         pad_h = (patch_pad, pad_h - patch_pad)
@@ -189,10 +158,10 @@ class SRFilter:
             eprint(msg + 'Inferencing finished. Duration: {} seconds.'.format(_d))
         # cropping
         for s in range(splits):
-            crop_t = (pad_h[0] if s // split_w == 0 else patch_pad) * self.scaling
-            crop_b = (pad_h[1] if s // split_w == split_h - 1 else patch_pad) * self.scaling
-            crop_l = (pad_w[0] if s % split_w == 0 else patch_pad) * self.scaling
-            crop_r = (pad_w[1] if s % split_w == split_w - 1 else patch_pad) * self.scaling
+            crop_t = pad_h[0] if s // split_w == 0 else patch_pad
+            crop_b = pad_h[1] if s // split_w == split_h - 1 else patch_pad
+            crop_l = pad_w[0] if s % split_w == 0 else patch_pad
+            crop_r = pad_w[1] if s % split_w == split_w - 1 else patch_pad
             if crop_t > 0 or crop_b > 0 or crop_l > 0 or crop_r > 0:
                 crop_t = None if crop_t <= 0 else crop_t
                 crop_b = None if crop_b <= 0 else -crop_b
@@ -247,12 +216,10 @@ def main(argv=None):
     from skimage import io
     from skimage import transform
     
-    FLAGS.dst_dir = FLAGS.dst_dir.format(src_dir=FLAGS.src_dir)
-    
     extensions = ['.jpeg', '.jpg', '.png', '.bmp', '.webp', '.tif', '.tiff', '.jp2']
     dst_postfix = FLAGS.dst_postfix + '.png'
     channel_index = -1
-    # number of threads
+    # nunber of threads
     if FLAGS.threads <= 0:
         thread_num = max(1, os.cpu_count() - FLAGS.threads)
     else:
@@ -261,8 +228,7 @@ def main(argv=None):
     if not os.path.exists(FLAGS.dst_dir): os.makedirs(FLAGS.dst_dir)
     src_files = listdir_files(FLAGS.src_dir, FLAGS.recursive, extensions)
     # initialization
-    filter = SRFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.scaling,
-        FLAGS.sess_threads, FLAGS.memory_fraction, FLAGS.device)
+    filter = ICFilter(FLAGS.model_dir, FLAGS.data_format, FLAGS.sess_threads)
     # worker - read, process and save image files
     def worker(q, t):
         msg = '{}: '.format(t) if thread_num > 1 else ''
@@ -283,18 +249,9 @@ def main(argv=None):
                 src = src[:, :, :-1]
             # process
             dst = filter.process(src, max_patch_height=FLAGS.patch_height, max_patch_width=FLAGS.patch_width,
-                patch_pad=FLAGS.patch_pad, patch_mod=FLAGS.patch_mod,
-                data_format='NHWC', msg=None if thread_num > 1 else True)
+                                 patch_pad=FLAGS.patch_pad, data_format='NHWC', msg=None if thread_num > 1 else True)
             # process and merge alpha channel
             if channels == 2 or channels == 4:
-                dtype = alpha.dtype
-                bits = dtype.itemsize * 8
-                alpha = transform.rescale(alpha, FLAGS.scaling, mode='edge', preserve_range=True)
-                if bits < 32:
-                    alpha = np.clip(alpha, 0, (1 << bits) - 1)
-                    alpha = alpha.astype(dtype)
-                else:
-                    alpha = np.clip(alpha, 0, 1)
                 dst = np.concatenate([dst, alpha], axis=channel_index)
             # save
             save_dir = dir_path[len(FLAGS.src_dir):].strip('/').strip('\\')

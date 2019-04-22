@@ -198,7 +198,7 @@ def test():
         print('No.{}'.format(FLAGS.postfix))
         mean_loss = [l / max_steps for l in sum_loss]
         psnr = 10 * np.log10(1 / mean_loss[0]) if mean_loss[0] > 0 else 100
-        print('PSNR (RGB) {}, MAD (RGB) {},'
+        print('PSNR (RGB) {}, MAD (RGB) {}, '
               'SS-SSIM(Y) {}, MS-SSIM (Y) {}, loss {}'
               .format(psnr, *mean_loss[1:]))
         

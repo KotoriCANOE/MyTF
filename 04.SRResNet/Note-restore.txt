@@ -1,0 +1,63 @@
+TODO:
+modify SE to be local adaptive
+
+
+
+original resize, multi=3
+
+1000	patch=96 batch=16
+1001	patch=64 batch=16
+
+add artifacts resize (ringing & aliasing), multi=2
+
+1002
+
+remove SE activation since it will cause discontinuity between patches, and is actually not viable for large patch by utilizing global average for features
+use random scaling ratio
+reduce strength of artifacts resize
+
+1003	use_se=0, predown=True
+1004	use_se=1, predown=False
+
+added local average SE activation (use_se=2)
+use symmetric kernel for Gauss filter in SSIM
+predown=False
+
+1005	use_se=2
+1006	use_se=0
+
+slightly modified weights of random resizes, remove artifacts resize
+
+1007 use_se=1, channels=64, g_depth=8, patch=96
+
+use_se=1, channels=64, g_depth=8, patch=96
+limit random scaling to be >= 4/3
+use different weights for downscale/upscale
+
+1008
+
+patch=112
+force scaling at least 1 stage (2 scales)
+
+1009
+
+lower prob. of multistage from 0.5 to 0.3
+slightly modified weights, use artifacts resize in upscale
+
+1010
+
+added random chroma downsampling to JPEG compression
+prob. of JPEG from 0.32 to 0.40
+slightly modified weights
+
+1011
+
+added random chroma downsampling
+prob. of JPEG = 0.32
+
+1012	patch=112, g_depth=8, activation=su, channels=64
+1013	patch=160, g_depth=8, activation=su, channels=32
+1014*	patch=160, g_depth=8, activation=swish, channels=32
+1015	patch=160, g_depth=5, activation=su, channels=32
+1016*	patch=128, g_depth=16, activation=swish, channels=32
+

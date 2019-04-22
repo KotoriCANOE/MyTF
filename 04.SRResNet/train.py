@@ -306,7 +306,7 @@ def main(argv=None):
     
     if not FLAGS.restore:
         if os.path.exists(FLAGS.train_dir):
-            eprint('Removed :' + FLAGS.train_dir)
+            eprint('Removed: ' + FLAGS.train_dir)
             shutil.rmtree(FLAGS.train_dir)
         os.makedirs(FLAGS.train_dir)
     

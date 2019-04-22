@@ -1,0 +1,143 @@
+
+No	tesPSNR	testMAD	SS-SSIM	MS-SSIM	step/s	steps	trainFW	trainBW	testFW	others
+
+SRResNet
+62	32.887	.010385	.957845	.964344	7.00	108500					43.329	[3x3x64+A], [3x3x64+A, 3x3x64, +skip] * 6, [3x3x64, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (36928 + 36928) * 6 + 36928 + 18464 + 867 = 501187
+63*	32.879	.010398	.957956	.964454	6.30	108500					>40.260	[3x3x64+A], [3x3x64+A, 3x3x64, +skip] * 6, [3x3x64, +skip], [spc(2x):3x3x16x2x2+A], [3x3x3]
+1792 + (36928 + 36928) * 6 + 36928 + 36928 + 435 = 519219
+64											5425	81.370	119.671			data_format=NHWC
+65											5425	69.675	108.080			data_format=NCHW
+66									8.10	5425	24.431	75.682			disable activation summary, resize conv
+67									7.05	5425	46.593	101.412			disable activation summary, sub-pixel conv
+68	32.899	.010374	.958016	.964476	7.80	108500					structure as 62, weight_decay=1e-5
+
+No	tesPSNR	testMAD	SS-SSIM	MS-SSIM	step/s	steps	others
+
+new pre-processing, weight_decay=1e-5
+
+71	30.830	.014799	.938027	.948496	7.00	108500	none
+72	31.056	.014528	.938567	.948961	7.00	108500	less aggressive resizers
+73	31.252	.014040	.943759	.952543	7.00	108500	noise correlation changed to random normal
+74	31.473	.013251	.944345	.9531837.00	108500	with Y/YUV/RGB noise
+
+75	31.434	.013315	.943934	.952829	7.50	108500	add activation after skip connection
+75	31.393	.013390	.943707	.952598	7.50	175577	
+75	31.403	.013372	.943764	.952649			325500	PIXIV 2012-2014
+75	31.513	.013150	.943468	.952972			616521	PIXIV 2012-2015
+75	31.550	.013082	.943841	.953284			785677	pre_down=False
+
+new test set and pre-processing
+test: noise_scale=0.01 noise_corr=0.75 jpeg_coding=False
+train: pre_down=False, noise_scale=0.01 noise_corr=0.75 jpeg_coding=False
+75	29.635	.016948	.935296	.945011			785677	test: gamma-corrected pre_down
+	29.676	.016935	.935643	.945261					test: sigmoidal pre_down
+	29.670	.016917	.935608	.945282					test: gamma-ignorant pre_down
+	29.671	.016801	.935620	.945161					test: no pre_down
+new training pre-processing
+train: pre_down=gamma-corrected, noise_scale=0.01 noise_corr=0.75 jpeg_coding=False
+75	29.630	.016954	.935268	.944990			812076	test: gamma-corrected pre_down
+	29.649	.016927	.935426	.945142					test: sigmoidal pre_down
+	29.644	.016905	.935397	.945168					test: gamma-ignorant pre_down
+	29.643	.016791	.935389	.945026					test: no pre_down
+
+test: pre_down=sigmoidal, jpeg_coding=False
+train: pre_down=False, noise_scale=0.01 noise_corr=0.75 jpeg_coding=False
+PReLU
+76	30.101	.016149	.940667	.949156			119476	
+slightly modified random resize
+76	29.986	.016631	.936319	.946278			119476	
+76	29.8xx	.016744	.935626	.945509			212152	jpeg_coding=True
+test: jpeg_coding=True
+76	29.368	.018446	.922807	.936375			119476	
+76	29.583	.017645	.928301	.940650			358427	jpeg_coding=True
+
+slightly modified JPEG coding
+80	29.349	.018257	.925718	.938518			79650	res_blocks=6, channels=64, channels2=32
+81	29.531	.017900	.926975	.939989			79650	res_blocks=8, channels=64, channels2=32
+81	29.595	.017714	.929664	.941432			166487	res_blocks=8, channels=64, channels2=32
+82	29.556	.017846	.927331	.940073			79650	res_blocks=6, channels=80, channels2=40
+83	29.541	.018001	.927998	.940459			79650	res_blocks=10, channels=64, channels2=32
+83	29.730	.017447	.931211	.942525			236727	res_blocks=10, channels=64, channels2=32
+
+res_blocks=8, channels=64, channels2=32
+weight_decay=0
+epoch=5
+90	29.148	.019146	.924136	.937283					initializer=1
+epoch=2, lr_decay_steps=100
+91	28.770	.019690	.918604	.933401					learning_rate=1e-3, initializer=5
+92	27.805	.022556	.906906	.924446					learning_rate=1e-4, initializer=5
+93	28.801	.019561	.918436	.933187					learning_rate=1e-3, initializer=1
+94	28.740	.019870	.917742	.933273					learning_rate=1e-3, initializer=2
+95	28.721	.019831	.918825	.933320					learning_rate=1e-3, initializer=3
+96	28.792	.019722	.918228	.933206					learning_rate=1e-3, initializer=4
+
+epoch=2, initializer=5, learning_rate=1e-3, lr_decay_steps=100
+91	28.770	.019690	.918604	.933401					weight_decay=0
+97	28.892	.019382	.918584	.933496					weight_decay=1e-5
+98	28.801	.019483	.917206	.932496					weight_decay=4e-5
+99	28.783	.019667	.918248	.933128					weight_decay=1e-5, NadamOptimizer
+
+epoch=2, initializer=5, learning_rate=1e-3, lr_decay_steps=100
+91	28.770	.019690	.918604	.933401					input_range=1, output_range=1
+100	28.775	.019729	.917693	.932741					input_range=1, output_range=2
+101	28.336	.020906	.915080	.930813					input_range=1, output_range=2, batch_norm=0.999
+102	28.760	.019813	.919553	.933825					input_range=2, output_range=2
+
+epoch=2, weight_decay=1e-5, lr_decay_steps=100
+use conv2d instead of deconv2d in resize_conv2d
+channels2=64
+103	28.590	.020342	.916042	.931096					input_range=1, output_range=1
+110 29.246	.018502	.924281	.937442			61084	input_range=1, output_range=2, epoch=50, lr_decay_steps=400
+
+epoch=50, lr_decay_factor=0.99, lr_decay_steps=500
+input_range=2, output_range=2
+use deconv2d in resize_conv2d
+channels2=32
+111	29.109	.018746	.921351	.935333			60341	loss(alpha=0.25) weight_decay 5e-6
+112	29.294	.018305	.921471	.935686			89969	loss(alpha=0.10) weight_decay 2e-6
+112	29.528	.017648	.925424	.938321			237651	loss(alpha=0.10) weight_decay 2e-6
+112	29.556	.017585	.925837	.938560			317390	loss(alpha=0.10) weight_decay 2e-6
+
+weight_decay 2e-6
+
+
+
+
+
+
+
+
+
+
+
+PaSRE
+1	32.495	.010821	.955555	.962457	5.00	108500	[3x3x64+A], [1x1x64+A, 3x3x1DW+A, 1x1x64, +skip] * 6, [3x3x1DW+A, 1x1x64, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (4160 + 640 + 4160) * 6 + (640 + 4160) + 18464 + 867 = 79683
+
+No	tesPSNR	testMAD	SS-SSIM	MS-SSIM	step/s	steps	forward	backwar	others
+
+resize conv, disable activation summary, disable all variable summary
+
+2	32.567	.010713	.956120	.962952	3.95	108500	33.211	205.321	57.312	[3x3x64+A], [3x3x1DW, 1x1x64+A, 3x3x1DW, 1x1x64, +skip+A] * 6, [3x3x1DW, 1x1x64, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (640 + 4160 + 640 + 4160) * 6 + (640 + 4160) + 18464 + 867 = 83523
+3	32.463	.011323	.955805	.962659	4.05	54250	30.127	182.874	52.110	[3x3x64+A], [3x3x64SEP+A, 3x3x64SEP, +skip+A] * 6, [3x3x64SEP, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (576 + 4160 + 576 + 4160) * 6 + (576 + 4160) + 18464 + 867 = 82691
+4*	32.453, .010990	.955737	.962597	4.05	54250		[3x3x64+A], [3x3x64SEP+A, 3x3x64SEP, +skip+A] * 6, [3x3x64SEP, +skip+A], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (576 + 4160 + 576 + 4160) * 6 + (576 + 4160) + 18464 + 867 = 82691
+5	32.350	.011084	.954430	.961246	4.05	54250		[3x3x64+A], [3x3x64SEP+A, 3x3x64SEP, +skip+A] * 6, [3x3x64SEP, +skip+A], [rc(2x):3x3x32], [3x3x3]
+1792 + (576 + 4160 + 576 + 4160) * 6 + (576 + 4160) + 18464 + 867 = 82691
+
+
+
+
+
+
+3		7.00	108500	[3x3x64+A], [1x1x64+A, 3x3x1+A, 1x1x64, +skip] * 6, [3x3x64, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (4160 + 36928 + 4160) * 6 + 36928 + 18464 + 867 = 329539
+4		5.00	108500	[3x3x64+A], [1x1x64+A, 3x3x1DW, 1x1x64, +skip] * 6, [3x3x1DW, 1x1x64, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (4160 + 640 + 4160) * 6 + (640 + 4160) + 18464 + 867 = 79683
+5		5.00	108500	[3x3x64+A], [1x1x64+A, 3x3x1DW, 1x1x64, +skip] * 6, [3x3x1DW, 1x1x64, +skip], [rc(2x):3x3x32+A], [3x3x3]
+1792 + (4160 + 640 + 4160) * 6 + (640 + 4160) + 18464 + 867 = 79683
+
+

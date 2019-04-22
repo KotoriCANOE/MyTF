@@ -1,0 +1,122 @@
+loss measured in smooth=0.95
+var estimated in smooth=0.6
+
+No	RGBloss	OPPloss	step/s	steps	1st rblocks	resize	last layer	channels	opt		lr init	lr min	others
+									*					*
+1*	0.01347					1e5		k3	8		last	k3			64			Adam	1e-3	1e-4
+2	0.01375					1e5		k5	8		last	k5			64			Adam	1e-3	1e-4
+3	0.01423					1e5		k7	8		last	k7			64			Adam	1e-3	1e-4
+									*					*
+4*	0.01285					1e5		k3	8		k3		k3			64			Adam	1e-3	1e-4
+5	0.01349					1e5		k5	8		k3		k5			64			Adam	1e-3	1e-4
+6							1e5		k7	8		k3		k7			64			Adam	1e-3	1e-4
+7	0.01400					1e5		k9	8		k3		k9			64			Adam	1e-3	1e-4
+										*
+12	0.01365			6.50	1e5		k3	4		k3		k3			64			Adam	1e-3	1e-4
+8	0.01310			5.05	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4
+4	0.01285			4.05	1e5		k3	8		k3		k3			64			Adam	1e-3	1e-4
+9*	0.01265			3.50	1e5		k3	10		k3		k3			64			Adam	1e-3	1e-4
+																	*
+10	0.01380			7.95	1e5		k3	8		k3		k3			32			Adam	1e-3	1e-4
+11	0.01330			5.20	1e5		k3	8		k3		k3			48			Adam	1e-3	1e-4
+4*	0.01285			4.05	1e5		k3	8		k3		k3			64			Adam	1e-3	1e-4
+																										*
+8	0.01310			5.05	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4
+21*	0.01225			7.65	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	batch_norm=0
+
+batch_norm=0
+																										*
+21	0.01225			7.65	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	
+22	0.01210			3.98	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	batch_size=32
+23	0.01					1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	loss_moving_average=0
+24	0.01			7.50	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	train_moving_average=0
+21	0.01225			7.65	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	
+25	0.01250			7.60	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	stddev_activation=2.0
+26	0.01322			7.69	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	stddev_factor=2.0, stddev_activation=4.0
+										*																*
+27	0.01240			8.60	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	channels2=32
+28	0.01260			9.10	1e5		k3	6		k3		k3			64			Adam	1e-3	1e-4	channels2=16
+29	0.01210			7.14	1e5		k3	8		k3		k3			64			Adam	1e-3	1e-4	channels2=32
+
+
+No	tesPSNR	testRGB	testOPP	traRGB	traOPP	step/s	steps	others
+
+channels2=32
+															*
+27*	29.715	.013461	.005557	0.01240			8.60	1e5		--activation relu --initializer 5 --init_factor 1.0 --init_activation 1.0
+30	29.446	.013596	.005622	0.01290			8.65	1e5		--activation relu --initializer 4 --init_factor 1.0 --init_activation 2.0
+31	29.845	.013292	.005509	0.01280			7.07	1e5		--activation prelu --initializer 4 --init_factor 1.0 --init_activation 2.0
+
+trained with L1 loss in OPP
+															*
+32	29.872	.013154	.005405			5.68e-3	7.60	1e5		
+33	30.083	.012960	.005329			5.69e-3	7.60	1e5		--lr_min 0
+34	30.027	.013126	.005474	0.01280	5.72e-3	7.60	1e5		
+35	30.079	.013012	.005367	0.01280	5.72e-3	7.60	1e5		--weight_decay 0.0001
+36	29.657	.013328	.005469	0.01238	5.54e-3	7.60	5e5		--lr_min 2e-5
+
+
+No	tesPSNR	testRGB	testOPP	MS-SSIM	traRGB	traOPP	step/s	steps	others
+
+*using new test data below*
+original OPP matrix (unnormalized)
+															*
+37	28.671	.015923	.006799	.992343	0.01240	5.40e-3	7.60	2e5		
+38	28.684	.015678	.006588	.992162					7.60	2e5		--weight_decay 0.0001
+
+larger dataset, patch size 96->128, added normal noise
+
+41	32.931	.010643	.004789	.997543	0.02276	0.0101	4.20	1.739e5	noise_level=0.005, lr_min=1e-4, lr_decay_factor=0.95
+42	32.805	.011175	.005170	.996509	0.02337	0.0105	4.30	2.602e5	noise_level=0.01, lr_min=0, lr_decay_factor=0.98
+43	32.866	.011116	.005160	.996571	0.02306	0.01045	4.41	426080	noise_level=0.01, lr_min=0, lr_decay_factor=0.98, fixed initialization=5
+
+
+No	tesPSNR	testRGB	testOPP	SS-SSIM	MS-SSIM	step/s	steps	others
+
+patch_size=96
+
+51	32.933	.010376	.004546	.954678	.962050	7.50	108500	noise_level=0.0, lr_min=0, lr_decay_factor=0.98, color_augmentation=0.05
+52	32.765	.010930	.004937	.952744	.960514	7.50	108500	noise_level=0.005, lr_min=0, lr_decay_factor=0.98, color_augmentation=0.05
+53*	33.020	.010189	.004452	.955653	.962726	7.50	108500	noise_level=0.0, lr_min=0, lr_decay_factor=0.95, color_augmentation=0.05
+54	32.913	.010323	.004523	.954717	.962083	7.50	108500	noise_level=0.0, lr_min=0, lr_decay_factor=0.95, color_augmentation=0
+55	32.783	.010485	.004571	.953778	.961301	7.50	108500	noise_level=0.0, lr_min=0, lr_decay_factor=0.90, color_augmentation=0
+
+noise_level=0.0, lr_decay_factor=0.95, color_augmentation=0.05
+
+56	33.107	.010116	.004472	.956186	.963291	8.50	108500	loss=RGB_mad
+57	32.890	.010394	.004751	.958083	.964654	6.50	108500	loss=mixed(RGB_mad+MS-SSIM2, sigma=[0.5,1,2,4,8], alpha=0.84)
+58	32.857	.010454	.004722	.957779	.964029	7.50	108500	loss=mixed(RGB_mad+SS-SSIM, alpha=0.84)
+59	33.030	.010215	.004545	.957468	.963894	7.50	108500	loss=mixed(RGB_mad+SS-SSIM, alpha=0.40)
+60	32.847	.010484	.004823	.958003	.964473	6.90	108500	loss=mixed(RGB_mad+MS-SSIM2, sigma=[0.5,1,2], alpha=0.84)
+
+treat "alpha" as absolute weight
+
+61	32.747	.010719	.005033	.958112	.964543	7.00	108500	loss=mixed(RGB_mad+MS-SSIM2, sigma=[0.6,1.5,4], alpha=0.84)
+62	32.887	.010385	.004682	.957846	.964344	7.00	108500	loss=mixed(RGB_mad+MS-SSIM2, sigma=[0.6,1.5,4], alpha=0.50)
+
+TODO:
+better resizer
+flip augmentation
+arbitrary resizer
+RGB/OPP loss
+(MS-)SSIM loss
+lr_decay_factor
+lr_min
+data range
+PReLU
+shuffle resize conv
+depthwise_conv
+group_conv
+initialize
+batch size
+
+Done:
+patch size: smaller is faster and consumes less memory
+color augmentation: slightly better
+loss_moving_average
+train_moving_average
+
+Bad:
+Batch Normalization
+random noise
+weight decay

@@ -1,0 +1,170 @@
+possible improvements:
+	sub-pixel conv
+	learnable end-to-end skip connection using sub-pixel conv
+	1-3-1 residual block
+	layer normalization
+	ensembles of flipped/rotated estimates
+
+tested:
+	Squeeze-and-Excitation
+	activation: LReLU0.05, LReLU0.2, Dice, selection unit
+	adaptive lr decay
+	Nadam optimizer
+	residual blocks
+	1-3 residual block
+	pre/post activation with/without BN
+	
+
+120		model1	PReLU(keras)
+121		model2	PReLU(keras)
+122		model2	ReLU
+123		model3	ReLU
+124		model2	ReLU	batch_norm(decay=0.9,scale=False)
+125		model2	ReLU	no activation in resize_conv
+126		model2	ReLU	init_activation=2.0
+127		model2	ReLU	batch_norm(decay=0.9,scale=True)
+128		model2	ReLU	batch_norm(decay=0.99,scale=True)
+129		model2	ReLU	batch_norm(decay=0.9968,scale=True)
+130		model2	ReLU	batch_norm(decay=0.999,scale=True)
+131		model2	ReLU	batch_norm(decay=0.9999,scale=True)
+132		model2	ReLU	init_activation=2.0, lr_min=1e-6
+
+init_activation=2.0, lr_min=1e-6
+
+133		model2	ReLU	batch_norm(decay=0.99,scale=True)
+134		model2	ReLU	batch_norm(decay=0.968,scale=True)
+135		model2	ReLU	batch_norm(decay=0.9968,scale=True)
+
+batch_norm(decay=0.99,scale=True)
+
+136		model2	ReLU	weight_decay=0
+137		model2	ReLU	weight_decay=1e-5
+138		model2	ReLU	weight_decay=1e-6
+139		model2	ReLU	weight_decay=5e-6
+
+weight_decay=2e-6
+
+140		model2	ReLU	initializer=3
+141		model2	ReLU	initializer=4
+
+initializer=4
+
+145		model2	ReLU	lr=2e-3
+146		model2	ReLU	lr=5e-3
+147		model2	ReLU	lr=5e-4
+148		model2	ReLU	lr=2e-4
+
+lr=1e-3
+
+149		model2	lrelu0.05
+142		model2	lrelu0.3
+143		model2	elu
+144		model2	prelu
+150		model2	SU		batch_norm=0.99
+151		model2	SU		batch_norm=0
+152		model2	SU		batch_norm=0, channels2=64
+
+BN+SU
+
+153		remove first pre-activation in each block
+154		1x1conv+3x3conv
+155		channels2=64
+156		residual learning, final skip connection
+
+residual learning
+
+157		resize conv as last layer
+158		channels=80, channels2=40
+159		g_depth=16
+160		channels=96, channels2=48
+161		channels=128, channels2=64
+
+channels=80, channels2=40
+
+158.1	12 epochs, lr_min=0
+158.2	12 epochs, lr_min=5e-5
+
+lr_min=0
+
+162		Nadam, decay_step=500, 12 epochs
+163		Nadam, decay_step=1000, 12 epochs
+164		Nadam, decay_step=250, 12 epochs
+165		Nadam, polynomial power8, 12 epochs
+166		Nadam, decay_step=500, epsilon=1e-3, 6 epochs
+167		Nadam, decay_step=500, epsilon=1e-1, 6 epochs
+168		Nadam, decay_step=250, custom decay function, 12 epochs
+
+Nadam, decay_step=500
+
+169		random resizer, no noise, no JPEG artifacts
+170		spline16 resizer, no noise, no JPEG artifacts
+test: PSNR (RGB) 32.40684334542249, MAD (RGB) 0.011701356223784386, SS-SSIM(Y) 0.9599571812152863, MS-SSIM (Y) 0.9644434726238251
+DIV2K_val: PSNR (RGB) 30.895636561761265, MAD (RGB) 0.01523887071874924, SS-SSIM(Y) 0.9310767811536789, MS-SSIM (Y) 0.9406274026632309
+171		spline16 resizer, no noise, no JPEG artifacts	DIV2K_train
+test: PSNR (RGB) 32.20454507321878, MAD (RGB) 0.012078234620857983, SS-SSIM(Y) 0.9587828785181045, MS-SSIM (Y) 0.9632553708553314
+DIV2K_val: PSNR (RGB) 31.050624210877483, MAD (RGB) 0.01502248658798635, SS-SSIM(Y) 0.9323905980587006, MS-SSIM (Y) 0.9415849727392197
+172		Catmull-Rom resizer, no noise, no JPEG artifacts	DIV2K_train
+test: PSNR (RGB) 32.174704711346386, MAD (RGB) 0.012026422140188515, SS-SSIM(Y) 0.9585869973897934, MS-SSIM (Y) 0.9632840436697007
+DIV2K_val: PSNR (RGB) 31.02573863757482, MAD (RGB) 0.015009734213817865, SS-SSIM(Y) 0.9321906167268753, MS-SSIM (Y) 0.941579539179802
+
+new dataset
+
+173		random_shuffle=256 with split
+174		random_shuffle=262144 with split
+175		random_shuffle=65536 without split
+
+176		Nadam train_moving_average=0.9999
+177		Nadam train_moving_average=0.999
+178		Nadam train_moving_average 0
+179		Adam train_moving_average=0.9999
+
+162.1	Nadam, decay_step=500, 12 epochs
+162.2	pretrain=162.1, Adam, train_moving_average=0.9999, lr=1e-5, decay_step=1000, 12 epochs
+162.3	pretrain=162.1, Nadam, train_moving_average=0.9999, lr=1e-5, decay_step=1000, 12 epochs
+
+train_moving_average=0.9999
+adaptive lr decay policy based on validation error
+
+180		ver.1, lr_decay_steps=-200, lr_decay_factor=0.50
+181		ver.2, lr_decay_steps=-200, lr_decay_factor=0.50
+182		ver.2, lr_decay_steps=-200, lr_decay_factor=0.29
+183		ver.2, lr_decay_steps=-200, lr_decay_factor=0.16
+184		Momentum opt, ver.2, lr_decay_steps=-200, lr_decay_factor=0.29
+185		50 epochs, ver.2, lr_decay_steps=-200, lr_decay_factor=0.29
+
+adaptive lr decay ver.2, lr_decay_steps=-200, lr_decay_factor=0.29
+Added Squeeze-and-Excitation layer
+Added L2 regularizer to activations (SU and SE)
+
+186		12 epochs
+186		+4 epochs, MAX_VAL_WINDOW=25
+187		16 epochs, MAX_VAL_WINDOW=50, val_window_inc decay=0.9, modified mean
+
+SE: use Glorot normal instead of Glorot uniform, SU: use He normal instead of Lecun normal
+
+188		SU: 2 conv layer instead of 1
+189		SE: added after resize_conv
+190		none
+191		use sub-pixel conv
+192		use sub-pixel conv in skip connection 0
+
+use sub-pixel conv
+use sub-pixel conv in skip connection
+
+193		remove Squeeze-and-Excitation in skip connection 1
+194		SE: channel_r=1
+195		SE: conv2d ver.
+
+SE: channel_r=1
+
+196		adaptive lr decay ver.3, start=10, val_window_inc=6, decay=0.8, MAX_VAL_WINDOW=30, mean+medium
+197		adaptive lr decay ver.3, start=10, val_window_inc=5, decay=0.9, mean+medium
+198		adaptive lr decay ver.3, start=20, val_window_inc=6, decay=0.9, mean+medium
+199		adaptive lr decay ver.3, start=10, val_window_inc=6, decay=0.95, mean+medium
+200		adaptive lr decay ver.4, start=10, val_window_inc=5, decay=9=>0.95, mean+medium
+
+pre-process: multistage_resize=2 (from 0), jpeg_coding=2.0 (from 1.0)
+
+201		fine-tune from 199
+202		from scratch, TF 1.4
+

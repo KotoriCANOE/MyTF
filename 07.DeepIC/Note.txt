@@ -1,0 +1,61 @@
+batch_norm=0.99
+
+2	with fully-connected
+
+full conv net
+
+3	ReLU
+4	Selection Unit
+5	Swish
+6	Swish + Squeeze-and-Excitation
+
+Swish + Squeeze-and-Excitation
+
+7	channels=32
+8	channels=48
+
+channels=48
+(batch_norm=0.999)
+
+9	batch_norm=0
+10	k_first=7, k_last=7
+11	d_depth=8
+
+12	encoder-final add tanh activation
+13	encoder-final add clip
+14	encoder-final add clip_swish
+
+encoder-final add tanh activation
+added quantization [0,255]
+
+15	downscale=4
+16	downscale=2
+17	downscale=10
+
+added entropy loss for quantized encoded image
+
+18	
+19	optimized entropy gradient
+20	PNG discriminator loss
+21	PNG discriminator loss
+22	PNG discriminator loss - convert to binarized enc as discriminator input
+
+PNG discriminator loss - binarized enc as generator output and as discriminator input
+
+23  weight3=1.0
+24  weight3=0.1
+25	add ceiling before debinarization
+
+add L2 norm loss of encoded binary image
+
+26
+27	*take average L2 norm
+28	add MSE loss, binary loss weight=1.0, comp loss weight=0.05
+29	*add MSE loss, binary loss weight=0.5, comp loss weight=0.1
+30	*fixed wrong skip connection in decoder
+31	use L1 norm instead of L2 norm for binarization loss
+32	*correctly limit encoded binary to {0, 1} instead of {-1, 0, 1} since tanh(x) is in [-1, 1]. debinarization: MSB instead of LSB
+33	*replace tanh with sigmoid, use round instead of relu+ceil
+34	*remove sigmoid, completely rely on binarization loss
+35 	apply rounding between encoder and decoder
+

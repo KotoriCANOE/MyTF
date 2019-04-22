@@ -1,8 +1,9 @@
 cd /d "%~dp0"
 
-:: remove COCO from dataset
-FOR %%i IN (1103) DO python train.py --postfix %%i --num_epochs 24 --no-restore --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish --patch_height 128 --patch_width 128 --batch_size 16 --random_seed 0 --learning_rate 2e-3 --weight_decay 1e-6
-FOR %%i IN (1103) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
+pause
+:: update Pixiv dataset
+FOR %%i IN (1106) DO python train.py --postfix %%i --num_epochs 20 --no-restore --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish --patch_height 128 --patch_width 128 --batch_size 16 --random_seed 0 --learning_rate 2e-3 --weight_decay 1e-6
+FOR %%i IN (1106) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
 
 pause
 exit
@@ -10,6 +11,17 @@ exit
 :: remove Konachan from dataset
 FOR %%i IN (1102) DO python train.py --postfix %%i --num_epochs 7 --no-restore --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish --patch_height 128 --patch_width 128 --batch_size 16 --random_seed 0 --learning_rate 2e-3 --weight_decay 1e-6
 FOR %%i IN (1102) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
+:: remove COCO from dataset
+FOR %%i IN (1103) DO python train.py --postfix %%i --num_epochs 24 --no-restore --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish --patch_height 128 --patch_width 128 --batch_size 16 --random_seed 0 --learning_rate 2e-3 --weight_decay 1e-6
+FOR %%i IN (1103) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
+:: remove DVI2K and Flickr2K from dataset
+FOR %%i IN (1104) DO python train.py --postfix %%i --num_epochs 26 --no-restore --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish --patch_height 128 --patch_width 128 --batch_size 16 --random_seed 0 --learning_rate 2e-3 --weight_decay 1e-6
+FOR %%i IN (1104) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
+:: add splited DVI2K and splited Flickr2K to dataset
+FOR %%i IN (1105) DO python train.py --postfix %%i --num_epochs 20 --no-restore --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish --patch_height 128 --patch_width 128 --batch_size 16 --random_seed 0 --learning_rate 2e-3 --weight_decay 1e-6
+FOR %%i IN (1105) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
+:: update test set
+FOR %%i IN (1105) DO python test.py --postfix %%i --progress --pre_down --scaling 1 --use_se 1 --g_depth 8 --channels 32 --activation swish >>test.log
 
 pause
 
