@@ -41,7 +41,6 @@ tf.app.flags.DEFINE_float('init_activation', 1.0,
 
 def ResNet_3_3(last):
     is_training = False
-    weight_decay = None
     channels = FLAGS.channels
     l = 0
     last = tf.identity(last, name='input')
@@ -54,14 +53,14 @@ def ResNet_3_3(last):
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
-                                 init_factor=FLAGS.init_activation, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=FLAGS.activation,
+                                 init_factor=FLAGS.init_activation)
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                 init_factor=FLAGS.init_factor, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                 init_factor=FLAGS.init_factor)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
             skip2 = last
@@ -73,7 +72,6 @@ def ResNet_3_3(last):
 
 def ResNet_1_3_1(last):
     is_training = False
-    weight_decay = None
     channels = FLAGS.channels
     l = 0
     last = tf.identity(last, name='input')
@@ -86,20 +84,20 @@ def ResNet_1_3_1(last):
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=1, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
-                                 init_factor=FLAGS.init_activation, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=FLAGS.activation,
+                                 init_factor=FLAGS.init_activation)
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=3, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
-                                 init_factor=FLAGS.init_activation, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=FLAGS.activation,
+                                 init_factor=FLAGS.init_activation)
         l += 1
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=1, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                 init_factor=FLAGS.init_factor, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                 init_factor=FLAGS.init_factor)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
             skip2 = last
@@ -111,7 +109,6 @@ def ResNet_1_3_1(last):
 
 def Xception(last):
     is_training = False
-    weight_decay = None
     channels = FLAGS.channels
     l = 0
     last = tf.identity(last, name='input')
@@ -124,14 +121,14 @@ def Xception(last):
         with tf.variable_scope('separable_conv{}'.format(l)) as scope:
             last = layers.separable_conv2d(last, ksize=3, channel_multiplier=1, out_channels=channels,
                                            stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                           batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
-                                           init_factor=FLAGS.init_activation, wd=weight_decay)
+                                           bn=FLAGS.batch_norm, train=is_training, activation=FLAGS.activation,
+                                           init_factor=FLAGS.init_activation)
         l += 1
         with tf.variable_scope('separable_conv{}'.format(l)) as scope:
             last = layers.separable_conv2d(last, ksize=3, channel_multiplier=1, out_channels=channels,
                                            stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                           batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                           init_factor=FLAGS.init_activation, wd=weight_decay)
+                                           bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                           init_factor=FLAGS.init_activation)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
             skip2 = last
@@ -142,12 +139,8 @@ def Xception(last):
 
 def ResNeXt(last, group_num=16):
     is_training = False
-    weight_decay = None
     channels = FLAGS.channels
-    #r1.3
-    #channel_index = -3 if FLAGS.data_format == 'NCHW' else -1
-    #r1.2
-    channel_index = 1 if FLAGS.data_format == 'NCHW' else 3
+    channel_index = -3 if FLAGS.data_format == 'NCHW' else -1
     l = 0
     last = tf.identity(last, name='input')
     # residual blocks
@@ -159,8 +152,8 @@ def ResNeXt(last, group_num=16):
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=1, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=FLAGS.activation,
-                                 init_factor=FLAGS.init_activation, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=FLAGS.activation,
+                                 init_factor=FLAGS.init_activation)
         '''
         # original version - individual weights for each group
         l += 1
@@ -170,8 +163,8 @@ def ResNeXt(last, group_num=16):
                 with tf.variable_scope('group{}'.format(_ + 1)) as scope:
                     group[_] = layers.conv2d(group[_], ksize=3, out_channels=channels // group_num,
                                              stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                             batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                             init_factor=FLAGS.init_activation, wd=weight_decay)
+                                             bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                             init_factor=FLAGS.init_activation)
             last = tf.concat(group, axis=channel_index)
             last = layers.apply_activation(last, activation=FLAGS.activation,
                                            data_format=FLAGS.data_format)
@@ -192,8 +185,8 @@ def ResNeXt(last, group_num=16):
             # convolution
             last = layers.conv2d(last, ksize=3, out_channels=channels // group_num,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                 init_factor=FLAGS.init_activation, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                 init_factor=FLAGS.init_activation)
             # channel de-batching
             if FLAGS.data_format != 'NCHW':
                 shape_divide = [shape[0], group_num, shape[1], shape[2], channels // group_num]
@@ -207,8 +200,8 @@ def ResNeXt(last, group_num=16):
         with tf.variable_scope('conv{}'.format(l)) as scope:
             last = layers.conv2d(last, ksize=1, out_channels=channels,
                                  stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                 batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                 init_factor=FLAGS.init_factor, wd=weight_decay)
+                                 bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                 init_factor=FLAGS.init_factor)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
             skip2 = last
@@ -220,12 +213,8 @@ def ResNeXt(last, group_num=16):
 
 def ShuffleNet(last, group_num=8):
     is_training = False
-    weight_decay = None
     channels = FLAGS.channels
-    #r1.3
-    #channel_index = -3 if FLAGS.data_format == 'NCHW' else -1
-    #r1.2
-    channel_index = 1 if FLAGS.data_format == 'NCHW' else 3
+    channel_index = -3 if FLAGS.data_format == 'NCHW' else -1
     l = 0
     last = tf.identity(last, name='input')
     # residual blocks
@@ -240,8 +229,8 @@ def ShuffleNet(last, group_num=8):
                 with tf.variable_scope('group{}'.format(_ + 1)) as scope:
                     group[_] = layers.conv2d(group[_], ksize=1, out_channels=channels // group_num,
                                              stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                             batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                             init_factor=FLAGS.init_activation, wd=weight_decay)
+                                             bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                             init_factor=FLAGS.init_activation)
             last = tf.concat(group, axis=channel_index)
             last = layers.apply_activation(last, activation=FLAGS.activation,
                                            data_format=FLAGS.data_format)
@@ -259,8 +248,8 @@ def ShuffleNet(last, group_num=8):
         with tf.variable_scope('depthwise_conv{}'.format(l)) as scope:
             last = layers.depthwise_conv2d(last, ksize=3, channel_multiplier=1,
                                            stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                           batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                           init_factor=FLAGS.init_activation, wd=weight_decay)
+                                           bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                           init_factor=FLAGS.init_activation)
         l += 1
         with tf.variable_scope('pointwise_group_conv{}'.format(l)) as scope:
             group = tf.split(last, group_num, axis=channel_index)
@@ -268,8 +257,8 @@ def ShuffleNet(last, group_num=8):
                 with tf.variable_scope('group{}'.format(_ + 1)) as scope:
                     group[_] = layers.conv2d(group[_], ksize=1, out_channels=channels // group_num,
                                              stride=1, padding='SAME', data_format=FLAGS.data_format,
-                                             batch_norm=FLAGS.batch_norm, is_training=is_training, activation=None,
-                                             init_factor=FLAGS.init_activation, wd=weight_decay)
+                                             bn=FLAGS.batch_norm, train=is_training, activation=None,
+                                             init_factor=FLAGS.init_activation)
             last = tf.concat(group, axis=channel_index)
         with tf.variable_scope('skip_connection{}'.format(l)) as scope:
             last = tf.add(last, skip2, 'elementwise_sum')
